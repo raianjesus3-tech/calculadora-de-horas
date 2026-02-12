@@ -7,14 +7,10 @@ from io import BytesIO
 st.set_page_config(page_title="Calculadora de Horas", layout="centered")
 
 st.title("🧮 Calculadora de Horas")
-st.write("Envie o PDF 'Extrato por Período' para gerar o relatório automático.")
+st.write("Envie o PDF 'Extrato por Período'.")
 
 uploaded_file = st.file_uploader("Enviar PDF", type=["pdf"])
 
-
-# ==============================
-# Funções auxiliares
-# ==============================
 
 def hhmm_to_minutes(hhmm):
     if not hhmm or ":" not in hhmm:
@@ -31,9 +27,10 @@ def minutes_to_hhmm(minutes):
     return f"{sinal}{h:02d}:{m:02d}"
 
 
-# ==============================
-# Processamento do PDF
-# ==============================
+def buscar_valor(texto, campo):
+    match = re.search(rf"{campo}\s+(\d{{1,3}}:\d{{2}})", texto)
+    return match.group(1) if match else "00:00"
+
 
 if uploaded_file:
 
@@ -46,46 +43,33 @@ if uploaded_file:
             if page_text:
                 texto += page_text + "\n"
 
-    linhas = texto.split("\n")
+    # Separar funcionários por blocos
+    blocos = re.split(r"\n(?=\d{6,})", texto)
 
-    for linha in linhas:
+    for bloco in blocos:
 
-        # Captura todos horários da linha
-        valores = re.findall(r"\d{1,3}:\d{2}", linha)
+        if "TOTAL NOTURNO" in bloco:
 
-        # Só processa linhas que realmente parecem funcionário
-        if len(valores) >= 3:
+            linhas = bloco.strip().split("\n")
+            nome = linhas[0].strip()
 
-            try:
-                # Nome = tudo antes do primeiro horário
-                primeiro_horario = valores[0]
-                nome = linha.split(primeiro_horario)[0].strip()
+            noturno = buscar_valor(bloco, "TOTAL NOTURNO")
+            falta = buscar_valor(bloco, "FALTA")
+            atraso = buscar_valor(bloco, "ATRASO")
+            extra70 = buscar_valor(bloco, "70%")
 
-                # Pegando sempre os últimos horários da linha
-                noturno = valores[-4] if len(valores) >= 4 else "00:00"
-                falta = valores[-3] if len(valores) >= 3 else "00:00"
-                extra70 = valores[-2] if len(valores) >= 2 else "00:00"
-                extra100 = valores[-1] if len(valores) >= 4 else "00:00"
+            total_extra = hhmm_to_minutes(extra70)
+            total_falta = hhmm_to_minutes(falta) + hhmm_to_minutes(atraso)
 
-                total_extra_min = hhmm_to_minutes(extra70) + hhmm_to_minutes(extra100)
-                falta_min = hhmm_to_minutes(falta)
+            saldo = total_extra - total_falta
 
-                saldo = total_extra_min - falta_min
-
-                dados.append({
-                    "NOME": nome,
-                    "FALTA": falta,
-                    "EXTRA": minutes_to_hhmm(total_extra_min),
-                    "EXTRA OU FALTA": minutes_to_hhmm(saldo),
-                    "NOTURNO": noturno
-                })
-
-            except:
-                continue
-
-    # ==============================
-    # Exibir resultado
-    # ==============================
+            dados.append({
+                "NOME": nome,
+                "TOTAL NOTURNO": noturno,
+                "FALTA + ATRASO": minutes_to_hhmm(total_falta),
+                "EXTRA 70%": minutes_to_hhmm(total_extra),
+                "EXTRA OU FALTA": minutes_to_hhmm(saldo)
+            })
 
     if dados:
         df = pd.DataFrame(dados)
