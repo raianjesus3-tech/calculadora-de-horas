@@ -12,6 +12,10 @@ st.write("Envie o PDF 'Extrato por Período' para gerar o relatório automático
 uploaded_file = st.file_uploader("Enviar PDF", type=["pdf"])
 
 
+# ==============================
+# Funções auxiliares
+# ==============================
+
 def hhmm_to_minutes(hhmm):
     if not hhmm or ":" not in hhmm:
         return 0
@@ -20,15 +24,16 @@ def hhmm_to_minutes(hhmm):
 
 
 def minutes_to_hhmm(minutes):
-    h = abs(minutes) // 60
-    m = abs(minutes) % 60
-    return f"{h:02d}:{m:02d}"
+    sinal = "-" if minutes < 0 else ""
+    minutes = abs(minutes)
+    h = minutes // 60
+    m = minutes % 60
+    return f"{sinal}{h:02d}:{m:02d}"
 
 
-def calcular_saldo(total_extra, falta):
-    saldo = total_extra - falta
-    return minutes_to_hhmm(saldo)
-
+# ==============================
+# Processamento do PDF
+# ==============================
 
 if uploaded_file:
 
@@ -45,34 +50,42 @@ if uploaded_file:
 
     for linha in linhas:
 
-        # Detecta linha com funcionário (TPBR ou JPBB)
-        if ("TPBR" in linha or "JPBB" in linha) and "TOTAL" not in linha:
+        # Captura todos horários da linha
+        valores = re.findall(r"\d{1,3}:\d{2}", linha)
 
-            valores = re.findall(r"\d{1,3}:\d{2}", linha)
+        # Só processa linhas que realmente parecem funcionário
+        if len(valores) >= 3:
 
-            if len(valores) >= 5:
-
-                # Nome = texto antes do primeiro horário
+            try:
+                # Nome = tudo antes do primeiro horário
                 primeiro_horario = valores[0]
                 nome = linha.split(primeiro_horario)[0].strip()
 
-                noturno = valores[1]
-                falta = valores[2]
-                extra70 = valores[3]
-                extra100 = valores[4]
+                # Pegando sempre os últimos horários da linha
+                noturno = valores[-4] if len(valores) >= 4 else "00:00"
+                falta = valores[-3] if len(valores) >= 3 else "00:00"
+                extra70 = valores[-2] if len(valores) >= 2 else "00:00"
+                extra100 = valores[-1] if len(valores) >= 4 else "00:00"
 
                 total_extra_min = hhmm_to_minutes(extra70) + hhmm_to_minutes(extra100)
                 falta_min = hhmm_to_minutes(falta)
 
-                saldo = calcular_saldo(total_extra_min, falta_min)
+                saldo = total_extra_min - falta_min
 
                 dados.append({
                     "NOME": nome,
                     "FALTA": falta,
                     "EXTRA": minutes_to_hhmm(total_extra_min),
-                    "EXTRA OU FALTA": saldo,
+                    "EXTRA OU FALTA": minutes_to_hhmm(saldo),
                     "NOTURNO": noturno
                 })
+
+            except:
+                continue
+
+    # ==============================
+    # Exibir resultado
+    # ==============================
 
     if dados:
         df = pd.DataFrame(dados)
