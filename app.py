@@ -1,13 +1,13 @@
 import streamlit as st
 import pdfplumber
-import pandas as pd
 import re
+import pandas as pd
 from io import BytesIO
 
 st.set_page_config(page_title="Calculadora de Horas", layout="centered")
 
-st.title("🧮 Calculadora de Horas")
-st.write("Envie o PDF 'Extrato por Período'.")
+st.title("🧮 Calculadora - Folha de Ponto")
+st.write("Envie a Folha de Ponto (PDF com todos os funcionários).")
 
 uploaded_file = st.file_uploader("Enviar PDF", type=["pdf"])
 
@@ -40,41 +40,36 @@ if uploaded_file:
 
     linhas = texto.split("\n")
 
+    nome_atual = None
+
     for linha in linhas:
 
-        # Ignorar cabeçalho e totais
-        if "TOTAL:" in linha or "NOME DA EMPRESA" in linha:
-            continue
+        # Captura nome
+        if linha.strip().startswith("Nome:"):
+            nome_atual = linha.replace("Nome:", "").strip()
 
-        # Capturar horários da linha
-        horarios = re.findall(r"\d{1,3}:\d{2}", linha)
+        # Quando encontra TOTAIS
+        if linha.strip().startswith("TOTAIS") and nome_atual:
 
-        if len(horarios) >= 3:
+            horarios = re.findall(r"\d{1,3}:\d{2}", linha)
 
-            # Nome = tudo antes do PIS (11 dígitos)
-            match_nome = re.search(r"LTDA\s+(.*?)\s+\d{11}", linha)
+            if len(horarios) >= 4:
 
-            if match_nome:
-                nome = match_nome.group(1).strip()
-            else:
-                continue
+                total_normais = horarios[0]
+                total_noturno = horarios[1]
+                falta = horarios[2]
+                extra70 = horarios[3]
 
-            # Últimos horários relevantes
-            extra70 = horarios[-1]
-            atraso = horarios[-2]
-            falta = horarios[-3]
+                saldo = hhmm_to_minutes(extra70) - hhmm_to_minutes(falta)
 
-            total_falta = hhmm_to_minutes(falta) + hhmm_to_minutes(atraso)
-            total_extra = hhmm_to_minutes(extra70)
-
-            saldo = total_extra - total_falta
-
-            dados.append({
-                "NOME": nome,
-                "FALTA + ATRASO": minutes_to_hhmm(total_falta),
-                "EXTRA 70%": extra70,
-                "EXTRA OU FALTA": minutes_to_hhmm(saldo)
-            })
+                dados.append({
+                    "NOME": nome_atual,
+                    "TOTAL NORMAIS": total_normais,
+                    "TOTAL NOTURNO": total_noturno,
+                    "FALTA": falta,
+                    "EXTRA 70%": extra70,
+                    "EXTRA OU FALTA": minutes_to_hhmm(saldo)
+                })
 
     if dados:
         df = pd.DataFrame(dados)
@@ -89,8 +84,9 @@ if uploaded_file:
         st.download_button(
             label="⬇️ Baixar Excel",
             data=buffer,
-            file_name="Relatorio_Calculadora_de_Horas.xlsx",
+            file_name="Relatorio_Folha_de_Ponto.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
     else:
-        st.error("Nenhum dado encontrado no PDF.")
+        st.error("Nenhum funcionário encontrado no PDF.")
