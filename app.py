@@ -1,101 +1,114 @@
-import streamlit as st
-import pdfplumber
-import re
-import pandas as pd
-from io import BytesIO
+if dados:
 
-st.set_page_config(page_title="Leitor Cartão de Ponto", layout="centered")
+    df = pd.DataFrame(dados)
 
-st.title("📄 Leitor Inteligente - Cartão de Ponto")
+    # ===============================
+    # BLOCO 1 - FUNCIONÁRIOS NORMAIS
+    # ===============================
 
-uploaded_file = st.file_uploader("Enviar PDF", type=["pdf"])
+    df["EXTRA OU FALTA"] = (
+        df["EXTRA 70%"].apply(hhmm_to_minutes)
+        - df["FALTA"].apply(hhmm_to_minutes)
+    ).apply(minutes_to_hhmm)
 
+    df1 = df[[
+        "NOME",
+        "FALTA",
+        "EXTRA 70%",
+        "EXTRA OU FALTA",
+        "TOTAL NOTURNO"
+    ]].copy()
 
-def hhmm_to_minutes(hhmm):
-    if ":" not in hhmm:
-        return 0
-    h, m = hhmm.split(":")
-    return int(h) * 60 + int(m)
+    df1.columns = [
+        "NOME",
+        "FALTA",
+        "EXTRA",
+        "EXTRA OU FALTA",
+        "NOTURNO"
+    ]
 
+    # ===============================
+    # BLOCO 2 - MOTOBOYS HORISTAS
+    # (exemplo: quem tiver HORAS > 0 e EXTRA 0)
+    # ===============================
 
-def minutes_to_hhmm(minutes):
-    sinal = "-" if minutes < 0 else ""
-    minutes = abs(minutes)
-    return f"{sinal}{minutes//60:02d}:{minutes%60:02d}"
+    df2 = df[[
+        "NOME",
+        "TOTAL NOTURNO",
+        "TOTAL NORMAIS",
+        "EXTRA 70%"
+    ]].copy()
 
+    df2.columns = [
+        "NOME",
+        "NOTURNO",
+        "HORAS",
+        "EXTRA"
+    ]
 
-if uploaded_file:
+    # ===============================
+    # MOSTRAR NA TELA
+    # ===============================
 
-    with pdfplumber.open(uploaded_file) as pdf:
-        texto = ""
-        for page in pdf.pages:
-            page_text = page.extract_text()
-            if page_text:
-                texto += page_text + "\n"
+    st.success("Relatório gerado com sucesso!")
 
-    dados = []
+    st.subheader("FUNCIONÁRIOS")
+    st.dataframe(df1)
 
-    blocos = texto.split("Cartão")
+    st.subheader("MOTOBOYS HORISTAS")
+    st.dataframe(df2)
 
-    for bloco in blocos:
+    # ===============================
+    # EXPORTAÇÃO FORMATADA
+    # ===============================
 
-        if "NOME DO FUNCIONÁRIO:" in bloco and "TOTAIS" in bloco:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill
+    from openpyxl.utils.dataframe import dataframe_to_rows
 
-            nome_match = re.search(r"NOME DO FUNCIONÁRIO:\s*(.+?)\s+PIS", bloco)
-            totais_match = re.search(r"TOTAIS\s+([0-9:\s]+)", bloco)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "RELATORIO"
 
-            if nome_match and totais_match:
+    row_num = 1
 
-                nome = nome_match.group(1).strip()
+    # ----- BLOCO 1 -----
+    for r in dataframe_to_rows(df1, index=False, header=True):
+        ws.append(r)
 
-                horarios = re.findall(r"\d{1,3}:\d{2}", totais_match.group(1))
+    # Estilizar cabeçalho
+    for col in range(1, 6):
+        ws.cell(row=1, column=col).font = Font(bold=True)
+        ws.cell(row=1, column=col).alignment = Alignment(horizontal="center")
+        ws.cell(row=1, column=col).fill = PatternFill(start_color="CCCCCC", fill_type="solid")
 
-                # Inicializa tudo zerado
-                noturnas = "00:00"
-                total_noturno = "00:00"
-                falta = "00:00"
-                atraso = "00:00"
-                extra70 = "00:00"
+    row_num = ws.max_row + 2
 
-                if len(horarios) == 5:
-                    noturnas, total_noturno, falta, atraso, extra70 = horarios
+    # ----- TÍTULO MOTOBOYS -----
+    ws.merge_cells(start_row=row_num, start_column=1, end_row=row_num, end_column=4)
+    ws.cell(row=row_num, column=1).value = "MOTOBOYS HORISTAS"
+    ws.cell(row=row_num, column=1).font = Font(bold=True)
+    ws.cell(row=row_num, column=1).alignment = Alignment(horizontal="center")
+    ws.cell(row=row_num, column=1).fill = PatternFill(start_color="FFFF00", fill_type="solid")
 
-                elif len(horarios) == 4:
-                    total_noturno, falta, atraso, extra70 = horarios
+    row_num += 1
 
-                elif len(horarios) == 6:
-                    noturnas, total_noturno, falta, atraso, extra70, _ = horarios
+    # ----- BLOCO 2 -----
+    for r in dataframe_to_rows(df2, index=False, header=True):
+        ws.append(r)
 
-                saldo = (
-                    hhmm_to_minutes(extra70)
-                    - hhmm_to_minutes(falta)
-                    - hhmm_to_minutes(atraso)
-                )
+    for col in range(1, 5):
+        ws.cell(row=row_num, column=col).font = Font(bold=True)
+        ws.cell(row=row_num, column=col).alignment = Alignment(horizontal="center")
+        ws.cell(row=row_num, column=col).fill = PatternFill(start_color="CCCCCC", fill_type="solid")
 
-                dados.append({
-                    "NOME": nome,
-                    "NOTURNAS NORMAIS": noturnas,
-                    "TOTAL NOTURNO": total_noturno,
-                    "FALTA": falta,
-                    "ATRASO": atraso,
-                    "EXTRA 70%": extra70,
-                    "SALDO FINAL": minutes_to_hhmm(saldo)
-                })
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
 
-    if dados:
-        df = pd.DataFrame(dados)
-        st.success("Relatório gerado com sucesso!")
-        st.dataframe(df)
-
-        buffer = BytesIO()
-        df.to_excel(buffer, index=False)
-        buffer.seek(0)
-
-        st.download_button(
-            "⬇️ Baixar Excel",
-            data=buffer,
-            file_name="Relatorio_Cartao_de_Ponto.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    else:
-        st.error("Não foi possível identificar dados no PDF.")
+    st.download_button(
+        "⬇️ Baixar Modelo Formatado",
+        data=buffer,
+        file_name="Relatorio_Modelo_Formatado.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
