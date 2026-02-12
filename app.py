@@ -1,47 +1,94 @@
-for linha in linhas:
+import streamlit as st
+import pdfplumber
+import pandas as pd
+import re
+from io import BytesIO
 
-    if ("TPBR SERVICOS" in linha or "JPBB SERVICOS" in linha) and "TOTAL:" not in linha:
+st.set_page_config(page_title="Calculadora de Horas", layout="centered")
 
-        # Extrair nome corretamente
-        nome_match = re.search(r"SERVICOS DE ALIMENTACAO LTDA (.*?) \d{11}", linha)
+st.title("🧮 Calculadora de Horas")
+st.write("Envie o PDF 'Extrato por Período' para gerar o relatório automático.")
 
-        if not nome_match:
-            continue
+uploaded_file = st.file_uploader("Enviar PDF", type=["pdf"])
 
-        nome = nome_match.group(1).strip()
 
-        # Capturar todos horários
-        valores = re.findall(r"\d{1,3}:\d{2}", linha)
+def hhmm_to_minutes(hhmm):
+    if not hhmm or ":" not in hhmm:
+        return 0
+    h, m = hhmm.split(":")
+    return int(h) * 60 + int(m)
 
-        if len(valores) < 2:
-            continue
 
-        # Identificar campos dinamicamente
-        noturno = valores[1] if len(valores) > 1 else "00:00"
-        falta = valores[2] if len(valores) > 2 else "00:00"
-        extra70 = valores[3] if len(valores) > 3 else "00:00"
-        extra100 = valores[4] if len(valores) > 4 else "00:00"
+def minutes_to_hhmm(minutes):
+    h = abs(minutes) // 60
+    m = abs(minutes) % 60
+    return f"{h:02d}:{m:02d}"
 
-        total_extra_min = hhmm_to_minutes(extra70) + hhmm_to_minutes(extra100)
-        total_falta_min = hhmm_to_minutes(falta)
 
-        saldo = minutes_to_hhmm(total_extra_min - total_falta_min)
+def calcular_saldo(total_extra, falta):
+    saldo = total_extra - falta
+    return minutes_to_hhmm(saldo)
 
-        if "MOTOBOY" in linha.upper():
 
-            dados_motoboys.append({
-                "NOME": nome,
-                "NOTURNO": noturno,
-                "HORAS": valores[0] if len(valores) > 0 else "00:00",
-                "EXTRA": saldo
-            })
+if uploaded_file:
 
-        else:
+    dados = []
 
-            dados_normais.append({
-                "NOME": nome,
-                "FALTA": falta,
-                "EXTRA": minutes_to_hhmm(total_extra_min),
-                "EXTRA OU FALTA": saldo,
-                "NOTURNO": noturno
-            })
+    with pdfplumber.open(uploaded_file) as pdf:
+        texto = ""
+        for page in pdf.pages:
+            page_text = page.extract_text()
+            if page_text:
+                texto += page_text + "\n"
+
+    linhas = texto.split("\n")
+
+    for linha in linhas:
+
+        # Detecta linha com funcionário (TPBR ou JPBB)
+        if ("TPBR" in linha or "JPBB" in linha) and "TOTAL" not in linha:
+
+            valores = re.findall(r"\d{1,3}:\d{2}", linha)
+
+            if len(valores) >= 5:
+
+                # Nome = texto antes do primeiro horário
+                primeiro_horario = valores[0]
+                nome = linha.split(primeiro_horario)[0].strip()
+
+                noturno = valores[1]
+                falta = valores[2]
+                extra70 = valores[3]
+                extra100 = valores[4]
+
+                total_extra_min = hhmm_to_minutes(extra70) + hhmm_to_minutes(extra100)
+                falta_min = hhmm_to_minutes(falta)
+
+                saldo = calcular_saldo(total_extra_min, falta_min)
+
+                dados.append({
+                    "NOME": nome,
+                    "FALTA": falta,
+                    "EXTRA": minutes_to_hhmm(total_extra_min),
+                    "EXTRA OU FALTA": saldo,
+                    "NOTURNO": noturno
+                })
+
+    if dados:
+        df = pd.DataFrame(dados)
+
+        st.success("Relatório gerado com sucesso!")
+        st.dataframe(df)
+
+        buffer = BytesIO()
+        df.to_excel(buffer, index=False)
+        buffer.seek(0)
+
+        st.download_button(
+            label="⬇️ Baixar Excel",
+            data=buffer,
+            file_name="Relatorio_Calculadora_de_Horas.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    else:
+        st.error("Nenhum dado encontrado no PDF.")
