@@ -11,6 +11,8 @@ st.write("Envie o PDF 'Extrato por Período' para gerar o relatório automático
 
 uploaded_file = st.file_uploader("Enviar PDF", type=["pdf"])
 
+# ---------------- FUNÇÕES ---------------- #
+
 def hhmm_to_minutes(hhmm):
     if not hhmm or ":" not in hhmm:
         return 0
@@ -22,21 +24,16 @@ def minutes_to_hhmm(minutes):
     m = abs(minutes) % 60
     return f"{h:02d}:{m:02d}"
 
-def calcular_saldo(extra70, extra100, falta):
-    total_extra = hhmm_to_minutes(extra70) + hhmm_to_minutes(extra100)
-    total_falta = hhmm_to_minutes(falta)
-    saldo = total_extra - total_falta
+def calcular_saldo(total_extra, falta):
+    saldo = total_extra - falta
+    return minutes_to_hhmm(saldo)
 
-    if saldo > 0:
-        return minutes_to_hhmm(saldo) + " EXTRA"
-    elif saldo < 0:
-        return minutes_to_hhmm(saldo) + " FALTA"
-    else:
-        return "00:00"
+# ---------------- PROCESSAMENTO ---------------- #
 
 if uploaded_file:
 
-    dados = []
+    dados_normais = []
+    dados_motoboys = []
 
     with pdfplumber.open(uploaded_file) as pdf:
         texto = ""
@@ -46,36 +43,58 @@ if uploaded_file:
     linhas = texto.split("\n")
 
     for linha in linhas:
-        if "TPBR SERVICOS" in linha and "TOTAL:" not in linha:
+
+        if ("TPBR" in linha or "JPBB" in linha) and "TOTAL:" not in linha:
 
             partes = linha.split()
-            nome = " ".join(partes[3:-8])
+            nome = partes[3]
 
             valores = re.findall(r"\d{1,3}:\d{2}", linha)
 
-            noturno = valores[1] if len(valores) > 1 else "00:00"
-            falta = valores[2] if len(valores) > 2 else "00:00"
-            extra70 = valores[3] if len(valores) > 3 else "00:00"
-            extra100 = valores[4] if len(valores) > 4 else "00:00"
+            if len(valores) < 3:
+                continue
 
-            saldo = calcular_saldo(extra70, extra100, falta)
+            noturno = valores[0]
+            falta = valores[1]
+            extra70 = valores[2]
+            extra100 = valores[3] if len(valores) > 3 else "00:00"
 
-            dados.append({
-                "NOME": nome,
-                "FALTA": falta,
-                "EXTRA": minutes_to_hhmm(hhmm_to_minutes(extra70) + hhmm_to_minutes(extra100)),
-                "EXTRA OU FALTA": saldo,
-                "NOTURNO": noturno
-            })
+            total_extra_min = hhmm_to_minutes(extra70) + hhmm_to_minutes(extra100)
+            total_falta_min = hhmm_to_minutes(falta)
 
-    if dados:
-        df = pd.DataFrame(dados)
+            saldo = calcular_saldo(total_extra_min, total_falta_min)
 
-        st.success("Relatório gerado com sucesso!")
-        st.dataframe(df)
+            # Detectar motoboy
+            if "MOTOBOY" in linha.upper():
+
+                dados_motoboys.append({
+                    "NOME": nome,
+                    "NOTURNO": noturno,
+                    "HORAS": minutes_to_hhmm(total_extra_min + total_falta_min),
+                    "EXTRA": saldo
+                })
+
+            else:
+
+                dados_normais.append({
+                    "NOME": nome,
+                    "FALTA": falta,
+                    "EXTRA": minutes_to_hhmm(total_extra_min),
+                    "EXTRA OU FALTA": saldo,
+                    "NOTURNO": noturno
+                })
+
+    # ---------------- EXIBIÇÃO ---------------- #
+
+    if dados_normais:
+
+        st.subheader("Funcionários")
+
+        df_normais = pd.DataFrame(dados_normais)
+        st.dataframe(df_normais)
 
         buffer = BytesIO()
-        df.to_excel(buffer, index=False)
+        df_normais.to_excel(buffer, index=False)
         buffer.seek(0)
 
         st.download_button(
@@ -84,5 +103,13 @@ if uploaded_file:
             file_name="Relatorio_Calculadora_de_Horas.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-    else:
+
+    if dados_motoboys:
+
+        st.subheader("Motoboys Horistas")
+
+        df_motoboys = pd.DataFrame(dados_motoboys)
+        st.dataframe(df_motoboys)
+
+    if not dados_normais and not dados_motoboys:
         st.error("Nenhum dado encontrado no PDF.")
