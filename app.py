@@ -7,14 +7,9 @@ from io import BytesIO
 st.set_page_config(page_title="Leitor de Cartão de Ponto", layout="centered")
 
 st.title("📄 Leitor Inteligente - Cartão de Ponto")
-st.write("Envie o PDF do cartão de ponto para gerar o relatório automático.")
 
 uploaded_file = st.file_uploader("Enviar PDF", type=["pdf"])
 
-
-# ==========================
-# Funções auxiliares
-# ==========================
 
 def hhmm_to_minutes(hhmm):
     if not hhmm or ":" not in hhmm:
@@ -31,13 +26,7 @@ def minutes_to_hhmm(minutes):
     return f"{sinal}{h:02d}:{m:02d}"
 
 
-# ==========================
-# Processamento
-# ==========================
-
 if uploaded_file:
-
-    dados = []
 
     with pdfplumber.open(uploaded_file) as pdf:
         texto = ""
@@ -46,50 +35,49 @@ if uploaded_file:
             if page_text:
                 texto += page_text + "\n"
 
-    linhas = texto.split("\n")
-    nome_atual = None
+    # Debug opcional
+    # st.text(texto)
 
-    for linha in linhas:
+    # Pega todos os nomes
+    nomes = re.findall(r"Nome\s*:\s*(.+)", texto)
 
-        # Captura Nome
-        if "Nome:" in linha:
-            nome_atual = linha.split("Nome:")[1].strip()
+    # Pega todos os blocos que vêm depois de TOTAIS
+    blocos_totais = re.findall(r"TOTAIS.*?(\d{1,3}:\d{2}.*)", texto)
 
-        # Captura Totais
-        if "TOTAIS" in linha and nome_atual:
+    dados = []
 
-            # Captura todos os horários da linha
-            horarios = re.findall(r"\d{1,3}:\d{2}", linha)
+    for i in range(min(len(nomes), len(blocos_totais))):
 
-            if len(horarios) >= 6:
-                noturnas_normais = horarios[0]
-                total_noturno = horarios[1]
-                falta = horarios[2]
-                atraso = horarios[3]
-                extra70 = horarios[4]
+        nome = nomes[i]
 
-                # Regra de cálculo (ajuste se quiser)
-                saldo_minutos = (
-                    hhmm_to_minutes(extra70)
-                    - hhmm_to_minutes(falta)
-                    - hhmm_to_minutes(atraso)
-                )
+        horarios = re.findall(r"\d{1,3}:\d{2}", blocos_totais[i])
 
-                dados.append({
-                    "NOME": nome_atual,
-                    "NOTURNAS NORMAIS": noturnas_normais,
-                    "TOTAL NOTURNO": total_noturno,
-                    "FALTA": falta,
-                    "ATRASO": atraso,
-                    "EXTRA 70%": extra70,
-                    "SALDO FINAL": minutes_to_hhmm(saldo_minutos)
-                })
+        if len(horarios) >= 5:
+            noturnas_normais = horarios[0]
+            total_noturno = horarios[1]
+            falta = horarios[2]
+            atraso = horarios[3]
+            extra70 = horarios[4]
+
+            saldo = (
+                hhmm_to_minutes(extra70)
+                - hhmm_to_minutes(falta)
+                - hhmm_to_minutes(atraso)
+            )
+
+            dados.append({
+                "NOME": nome,
+                "NOTURNAS NORMAIS": noturnas_normais,
+                "TOTAL NOTURNO": total_noturno,
+                "FALTA": falta,
+                "ATRASO": atraso,
+                "EXTRA 70%": extra70,
+                "SALDO FINAL": minutes_to_hhmm(saldo)
+            })
 
     if dados:
         df = pd.DataFrame(dados)
-
         st.success("Relatório gerado com sucesso!")
-        st.subheader("📊 Resultado Processado")
         st.dataframe(df)
 
         buffer = BytesIO()
@@ -104,4 +92,4 @@ if uploaded_file:
         )
 
     else:
-        st.error("Nenhum funcionário encontrado ou padrão diferente no PDF.")
+        st.error("Não foi possível identificar o padrão no PDF.")
