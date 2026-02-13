@@ -15,7 +15,7 @@ uploaded_file = st.file_uploader("Enviar PDF", type=["pdf"])
 
 
 # ==========================
-# Funções auxiliares (tempo)
+# Funções auxiliares
 # ==========================
 def hhmm_to_minutes(hhmm: str) -> int:
     if not hhmm or ":" not in hhmm:
@@ -44,17 +44,10 @@ def extract_full_text(pdf_file) -> str:
 
 
 # ==========================
-# Parser por funcionário
+# Parser
 # ==========================
 def parse_employee_blocks(texto: str) -> list[dict]:
-    """
-    Retorna uma lista de dicts por funcionário com:
-      NOME, CARGO, NOTURNAS NORMAIS, TOTAL NORMAIS, TOTAL NOTURNO, FALTA, ATRASO, EXTRA 70%
-    Observação: os TOTAIS variam por pessoa (1, 2, 3, 4, 5, 6+ valores...).
-    """
-    # separa blocos por ocorrência do título
     blocos = re.split(r"\bCartão\s+de\s+Ponto\b", texto)
-
     out = []
 
     for bloco in blocos:
@@ -66,52 +59,36 @@ def parse_employee_blocks(texto: str) -> list[dict]:
             continue
         nome = nome_match.group(1).strip()
 
-        # ✅ Captura cargo de forma robusta (mesmo se quebrar linha)
+        # Captura cargo corretamente
         cargo_match = re.search(r"NOME DO CARGO:\s*(.+)", bloco)
         cargo = cargo_match.group(1).split("\n")[0].strip().upper() if cargo_match else ""
 
-        # Captura a sequência de totais
         totais_match = re.search(r"TOTAIS\s+([0-9:\s]+)", bloco)
         if not totais_match:
             continue
 
         horarios = re.findall(r"\d{1,3}:\d{2}", totais_match.group(1))
 
-        # Defaults
         noturnas_normais = "00:00"
         total_normais = "00:00"
         total_noturno = "00:00"
         falta_e_atraso = "00:00"
         extra70 = "00:00"
 
-        # Heurísticas (TPBR/JPBB e variações)
         if len(horarios) == 5:
-            # NOTURNAS, TOTAL NORMAIS, TOTAL NOTURNO, FALTA E ATRASO, EXTRA 70
             noturnas_normais, total_normais, total_noturno, falta_e_atraso, extra70 = horarios
-
         elif len(horarios) == 4:
-            # TOTAL NORMAIS, TOTAL NOTURNO, FALTA E ATRASO, EXTRA 70
             total_normais, total_noturno, falta_e_atraso, extra70 = horarios
-
         elif len(horarios) >= 6:
-            # usa os 5 primeiros (ignora colunas extras tipo EXTRA 100)
             base = horarios[:5]
             noturnas_normais, total_normais, total_noturno, falta_e_atraso, extra70 = base
-
         elif len(horarios) == 3:
-            # TOTAL NORMAIS, TOTAL NOTURNO, EXTRA 70
             total_normais, total_noturno, extra70 = horarios
-
         elif len(horarios) == 2:
-            # TOTAL NORMAIS, EXTRA 70
             total_normais, extra70 = horarios
-
         elif len(horarios) == 1:
-            # só TOTAL NORMAIS
             total_normais = horarios[0]
 
-        # No PDF pode existir "FALTA E ATRASO" junto.
-        # Para seu modelo: joga tudo em FALTA e mantém ATRASO zerado.
         falta = falta_e_atraso
         atraso = "00:00"
 
@@ -130,7 +107,7 @@ def parse_employee_blocks(texto: str) -> list[dict]:
 
 
 # ==========================
-# Excel formatado (modelo)
+# Excel Formatado
 # ==========================
 def build_excel(df_func: pd.DataFrame, df_moto: pd.DataFrame) -> BytesIO:
     wb = Workbook()
@@ -150,7 +127,7 @@ def build_excel(df_func: pd.DataFrame, df_moto: pd.DataFrame) -> BytesIO:
             cell.fill = fill
         cell.border = border
 
-    # ===== BLOCO 1: FUNCIONÁRIOS =====
+    # BLOCO FUNCIONÁRIOS
     start_row = 2
 
     for col, name in enumerate(df_func.columns, start=1):
@@ -162,14 +139,14 @@ def build_excel(df_func: pd.DataFrame, df_moto: pd.DataFrame) -> BytesIO:
             c = ws.cell(row=r_idx, column=col_idx, value=value)
             style_cell(c)
 
-    # ===== TÍTULO MOTOBOYS =====
+    # Título Motoboys
     row_title = start_row + len(df_func) + 3
     ws.merge_cells(start_row=row_title, start_column=1, end_row=row_title, end_column=4)
     t = ws.cell(row=row_title, column=1, value="MOTOBOYS HORISTAS")
     style_cell(t, bold=True, fill=title_yellow)
-    ws.row_dimensions[row_title].height = 20 Topics
+    ws.row_dimensions[row_title].height = 20
 
-    # ===== BLOCO 2: MOTOBOYS =====
+    # BLOCO MOTOBOYS
     header_row2 = row_title + 1
 
     for col, name in enumerate(df_moto.columns, start=1):
@@ -181,7 +158,6 @@ def build_excel(df_func: pd.DataFrame, df_moto: pd.DataFrame) -> BytesIO:
             c = ws.cell(row=r_idx, column=col_idx, value=value)
             style_cell(c)
 
-    # Largura de colunas
     ws.column_dimensions["A"].width = 35
     ws.column_dimensions["B"].width = 14
     ws.column_dimensions["C"].width = 14
@@ -195,31 +171,29 @@ def build_excel(df_func: pd.DataFrame, df_moto: pd.DataFrame) -> BytesIO:
 
 
 # ==========================
-# EXECUÇÃO PRINCIPAL
+# EXECUÇÃO
 # ==========================
 if uploaded_file:
     texto = extract_full_text(uploaded_file)
     dados = parse_employee_blocks(texto)
 
     if not dados:
-        st.error("Não encontrei funcionários no PDF (texto vazio ou padrão inesperado).")
+        st.error("Não encontrei funcionários no PDF.")
         st.stop()
 
     df = pd.DataFrame(dados)
 
-    # EXTRA OU FALTA = EXTRA - FALTA
     df["EXTRA OU FALTA"] = (
-        df["EXTRA 70%"].apply(hhmm_to_minutes) - df["FALTA"].apply(hhmm_to_minutes)
+        df["EXTRA 70%"].apply(hhmm_to_minutes)
+        - df["FALTA"].apply(hhmm_to_minutes)
     ).apply(minutes_to_hhmm)
 
-    # ✅ Separar motoboy (cargo padronizado em MAIÚSCULO)
+    # Separar motoboys corretamente
     is_motoboy = df["CARGO"].astype(str).str.contains(r"\bMOTOBOY\b", regex=True, na=False)
 
-    # BLOCO 1: somente NÃO-motoboy
     df_func = df[~is_motoboy][["NOME", "FALTA", "EXTRA 70%", "EXTRA OU FALTA", "TOTAL NOTURNO"]].copy()
     df_func.columns = ["NOME", "FALTA", "EXTRA", "EXTRA OU FALTA", "NOTURNO"]
 
-    # BLOCO 2: somente motoboy
     df_moto_raw = df[is_motoboy].copy()
     df_moto = df_moto_raw[["NOME", "TOTAL NOTURNO", "TOTAL NORMAIS", "EXTRA 70%"]].copy()
     df_moto.columns = ["NOME", "NOTURNO", "HORAS", "EXTRA"]
