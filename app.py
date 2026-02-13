@@ -2,44 +2,53 @@ import streamlit as st
 import os
 import json
 import re
-import pdfplumber
 import gspread
+import pdfplumber
 from google.oauth2.service_account import Credentials
 
-# ========================================
-# CONFIGURAÇÃO GOOGLE SHEETS
-# ========================================
+# ===============================
+# CONFIGURAÇÃO INICIAL
+# ===============================
+
+st.set_page_config(page_title="Sistema Calculadora de Horas", layout="wide")
+
+st.title("🚀 Sistema Calculadora de Horas")
+
+# ===============================
+# CONECTAR GOOGLE SHEETS
+# ===============================
+
+try:
+    if "GCP_SERVICE_ACCOUNT_JSON" not in os.environ:
+        st.error("❌ Variável GCP_SERVICE_ACCOUNT_JSON não encontrada.")
+        st.stop()
+
+    creds_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"])
+
+    scope = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+    client = gspread.authorize(creds)
+
+except Exception as e:
+    st.error("❌ Erro na conexão com Google Sheets")
+    st.code(str(e))
+    st.stop()
+
+# ===============================
+# URL DA PLANILHA (COLOQUE ENTRE ASPAS!)
+# ===============================
 
 PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1er5DKT8jNm4qLTgQzdT2eQL8BrxxDlceUfkASYKYEZ8"
 
-scope = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
-]
+planilha = client.open_by_url(PLANILHA_URL)
 
-if "GCP_SERVICE_ACCOUNT_JSON" not in os.environ:
-    st.error("❌ Variável GCP_SERVICE_ACCOUNT_JSON não encontrada.")
-    st.stop()
-
-creds_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"])
-creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
-client = gspread.authorize(creds)
-
-# ========================================
-# INTERFACE
-# ========================================
-
-st.title("🚀 Sistema Calculadora de Horas")
-st.subheader("📤 Enviar PDF de Espelho de Ponto")
-
-pdf_file = st.file_uploader(
-    "Selecione o PDF da loja (JPBB ou TPBR)",
-    type="pdf"
-)
-
-# ========================================
+# ===============================
 # IDENTIFICAR LOJA
-# ========================================
+# ===============================
 
 def identificar_loja(texto):
     texto = texto.upper()
@@ -49,90 +58,117 @@ def identificar_loja(texto):
         return "JPBB"
     return None
 
-# ========================================
-# EXTRAIR DADOS DO PDF
-# ========================================
+# ===============================
+# UPLOAD PDF
+# ===============================
 
-def extrair_dados(texto):
-    funcionarios = {}
+st.header("📤 Enviar PDF de Espelho de Ponto")
 
-    linhas = texto.split("\n")
+pdf_file = st.file_uploader("Selecione o PDF da loja (JPBB ou TPBR)", type=["pdf"])
 
-    for linha in linhas:
-        linha = linha.strip()
+if pdf_file:
 
-        # Exemplo de padrão simples (ajustaremos conforme seu PDF)
-        match = re.search(r"([A-Z\s]+)\s+(\d+:\d+)\s+(\d+:\d+)\s+(-?\d+:\d+)", linha)
+    texto_extraido = ""
 
-        if match:
-            nome = match.group(1).strip()
-            extra = match.group(2)
-            noturno = match.group(3)
-            falta = match.group(4)
-
-            funcionarios[nome] = {
-                "extra": extra,
-                "noturno": noturno,
-                "falta": falta
-            }
-
-    return funcionarios
-
-# ========================================
-# PROCESSAR PDF
-# ========================================
-
-if pdf_file is not None:
-
-    with st.spinner("⏳ Processando PDF..."):
-        with pdfplumber.open(pdf_file) as pdf:
-            texto_completo = ""
-            for pagina in pdf.pages:
-                texto_completo += pagina.extract_text() + "\n"
+    with pdfplumber.open(pdf_file) as pdf:
+        for page in pdf.pages:
+            texto_extraido += page.extract_text() + "\n"
 
     st.success("✅ PDF lido com sucesso!")
 
-    # DEBUG (mostrar texto)
-    st.write("📄 Texto extraído:")
-    st.text(texto_completo[:2000])
+    # ===============================
+    # IDENTIFICAR LOJA
+    # ===============================
 
-    loja = identificar_loja(texto_completo)
+    loja = identificar_loja(texto_extraido)
 
     if not loja:
-        st.error("❌ Não foi possível identificar a loja no PDF.")
+        st.error("❌ Loja não identificada no PDF.")
         st.stop()
 
-    st.write(f"🏬 Loja identificada: {loja}")
+    st.write("🏬 Loja identificada:", loja)
 
-    mes = "FEVEREIRO"  # depois podemos automatizar
-    nome_aba = f"{mes}_{loja}"
+    # ===============================
+    # IDENTIFICAR MÊS
+    # ===============================
+
+    match_mes = re.search(r"DE\s+(\d{2})/(\d{2})/(\d{4})", texto_extraido)
+
+    if match_mes:
+        mes_num = match_mes.group(2)
+        ano = match_mes.group(3)
+    else:
+        st.error("❌ Não foi possível identificar o mês no PDF.")
+        st.stop()
+
+    meses = {
+        "01": "JANEIRO",
+        "02": "FEVEREIRO",
+        "03": "MARCO",
+        "04": "ABRIL",
+        "05": "MAIO",
+        "06": "JUNHO",
+        "07": "JULHO",
+        "08": "AGOSTO",
+        "09": "SETEMBRO",
+        "10": "OUTUBRO",
+        "11": "NOVEMBRO",
+        "12": "DEZEMBRO",
+    }
+
+    nome_aba = f"{meses[mes_num]}_{loja}"
 
     try:
-        planilha = client.open_by_url(PLANILHA_URL)
         aba = planilha.worksheet(nome_aba)
     except:
-        st.error(f"❌ Aba {nome_aba} não encontrada.")
+        st.error(f"❌ Aba {nome_aba} não encontrada na planilha.")
         st.stop()
 
-    dados = extrair_dados(texto_completo)
+    st.write("📄 Dados irão para aba:", nome_aba)
 
-    if not dados:
-        st.warning("⚠ Nenhum funcionário identificado no PDF.")
+    # ===============================
+    # IDENTIFICAR NOME FUNCIONÁRIO
+    # ===============================
+
+    match_nome = re.search(r"NOME DO FUNCIONÁRIO:\s*(.+)", texto_extraido)
+
+    if match_nome:
+        nome_funcionario = match_nome.group(1).strip().upper()
     else:
-        st.write("📊 Funcionários encontrados:")
-        st.write(dados)
+        st.error("❌ Não foi possível identificar o nome do funcionário.")
+        st.stop()
 
-        # Buscar nomes na planilha
-        nomes_planilha = aba.col_values(1)
+    st.write("👤 Funcionário identificado:", nome_funcionario)
 
-        for nome_pdf, info in dados.items():
-            for i, nome_planilha in enumerate(nomes_planilha):
-                if nome_pdf.upper() in nome_planilha.upper():
+    # ===============================
+    # EXTRAIR HORAS (AJUSTE SE NECESSÁRIO)
+    # ===============================
 
-                    linha = i + 1
+    # Aqui você pode melhorar depois
+    total_extra = "00:00"
+    total_noturno = "00:00"
+    total_falta = "00:00"
 
-                    aba.update(f"B{linha}", info["falta"])
-                    aba.update(f"C{linha}", info["extra"])
-                    aba.update(f"E{linha}", info["noturno"])
+    # ===============================
+    # ENVIAR PARA PLANILHA
+    # ===============================
 
-        st.success("🎉 Dados enviados para o Google Sheets com sucesso!")
+    dados = aba.get_all_values()
+
+    linha_funcionario = None
+
+    for i, linha in enumerate(dados):
+        if linha and linha[0].strip().upper() == nome_funcionario:
+            linha_funcionario = i + 1
+            break
+
+    if not linha_funcionario:
+        st.error("❌ Funcionário não encontrado na planilha.")
+        st.stop()
+
+    # Atualizar colunas
+    aba.update(f"B{linha_funcionario}", total_falta)
+    aba.update(f"C{linha_funcionario}", total_extra)
+    aba.update(f"E{linha_funcionario}", total_noturno)
+
+    st.success("🎉 Dados enviados para o Google Sheets com sucesso!")
