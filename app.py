@@ -1,93 +1,141 @@
-def parse_employee_blocks(texto: str) -> list[dict]:
-    blocos = re.split(r"\bCart[aã]o\s+de\s+Ponto\b", texto, flags=re.IGNORECASE)
-    out = []
+import streamlit as st
+import pdfplumber
+import re
+import os
+import json
+import unicodedata
+import gspread
+from google.oauth2.service_account import Credentials
 
-    for bloco in blocos:
-        if ("NOME DO FUNCION" not in bloco.upper()) or ("TOTAIS" not in bloco.upper()):
+# ==========================================
+# CONFIG GOOGLE
+# ==========================================
+
+PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1er5DKT8jNm4qLTgQzdT2eQL8BrxxDlceUfkASYKYEZ8/edit"
+
+scope = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+]
+
+creds_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"])
+creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+client = gspread.authorize(creds)
+
+planilha = client.open_by_url(PLANILHA_URL)
+
+# ==========================================
+# FUNÇÕES AUXILIARES
+# ==========================================
+
+def normalizar_nome(nome):
+    nome = nome.upper().strip()
+    nome = unicodedata.normalize('NFKD', nome)
+    nome = "".join(c for c in nome if not unicodedata.combining(c))
+    nome = re.sub(r"\s+", " ", nome)
+    return nome
+
+def identificar_loja(texto):
+    texto = texto.upper()
+    if "TPBR" in texto:
+        return "TPBR"
+    elif "JPBB" in texto:
+        return "JPBB"
+    return None
+
+def extrair_totais(bloco):
+    horarios = re.findall(r"\d{1,3}:\d{2}", bloco)
+
+    if len(horarios) >= 3:
+        return {
+            "falta": horarios[-3],
+            "extra": horarios[-2],
+            "noturno": horarios[-1]
+        }
+
+    return {
+        "falta": "00:00",
+        "extra": "00:00",
+        "noturno": "00:00"
+    }
+
+# ==========================================
+# INTERFACE
+# ==========================================
+
+st.title("🚀 Sistema Calculadora de Horas")
+
+pdf_file = st.file_uploader("Selecione o PDF da loja (JPBB ou TPBR)", type="pdf")
+
+if pdf_file:
+
+    texto_completo = ""
+
+    with pdfplumber.open(pdf_file) as pdf:
+        for pagina in pdf.pages:
+            texto_completo += pagina.extract_text() + "\n"
+
+    st.success("PDF lido com sucesso!")
+
+    loja = identificar_loja(texto_completo)
+
+    if not loja:
+        st.error("Loja não identificada no PDF.")
+        st.stop()
+
+    st.info(f"🏢 Loja identificada: {loja}")
+
+    mes = "JANEIRO"  # pode automatizar depois
+    nome_aba = f"{mes}_{loja}"
+
+    st.info(f"📄 Dados irão para aba: {nome_aba}")
+
+    try:
+        aba = planilha.worksheet(nome_aba)
+    except:
+        st.error(f"Aba {nome_aba} não encontrada na planilha.")
+        st.stop()
+
+    linhas = aba.get_all_values()
+
+    # pegar nomes da coluna A
+    nomes_planilha = {}
+    for i, linha in enumerate(linhas):
+        if linha and linha[0]:
+            nomes_planilha[normalizar_nome(linha[0])] = i + 1
+
+    # dividir por funcionário
+    funcionarios_pdf = re.split(r"NOME DO FUNCIONARIO:", texto_completo)
+
+    atualizados = 0
+
+    for bloco in funcionarios_pdf:
+
+        match_nome = re.search(r"([A-ZÁÉÍÓÚÂÊÔÃÕÇ ]+)", bloco)
+
+        if not match_nome:
             continue
 
-        nome_match = re.search(
-            r"NOME DO FUNCION[AÁ]RIO:\s*(.+?)\s+PIS",
-            bloco,
-            flags=re.IGNORECASE | re.DOTALL
-        )
-        if not nome_match:
-            continue
+        nome_pdf = normalizar_nome(match_nome.group(1))
 
-        nome = nome_match.group(1).replace("\n", " ").strip()
+        if nome_pdf in nomes_planilha:
 
-        cargo_match = re.search(r"NOME DO CARGO:\s*(.+)", bloco, flags=re.IGNORECASE)
-        cargo = cargo_match.group(1).split("\n")[0].strip().upper() if cargo_match else ""
+            linha_encontrada = nomes_planilha[nome_pdf]
+            totais = extrair_totais(bloco)
 
-        totais_match = re.search(r"TOTAIS\s+([0-9:\s]+)", bloco, flags=re.IGNORECASE)
-        if not totais_match:
-            continue
+            try:
+                aba.update(f"B{linha_encontrada}:E{linha_encontrada}", [[
+                    totais["falta"],
+                    totais["extra"],
+                    totais["extra"],  # coluna D
+                    totais["noturno"]
+                ]])
+                atualizados += 1
 
-        horarios = re.findall(r"\d{1,3}:\d{2}(?::\d{2})?", totais_match.group(1))
+            except Exception as e:
+                st.error(f"Erro ao atualizar {nome_pdf}: {e}")
 
-        # Padroniza ignorando segundos
-        horarios = [h[:5] for h in horarios]
-
-        # Valores padrão
-        noturnas_normais = "00:00"
-        total_normais = "00:00"
-        total_noturno = "00:00"
-        falta = "00:00"
-        extra70 = "00:00"
-
-        is_motoboy = "MOTOBOY" in cargo.upper()
-
-        # 🔥 REGRA CORRIGIDA
-        if is_motoboy:
-            # Normalmente motoboy vem:
-            # TOTAL NORMAIS, TOTAL NOTURNO, FALTA, EXTRA
-            if len(horarios) >= 4:
-                total_normais = horarios[0]
-                total_noturno = horarios[1]
-                falta = horarios[2]
-                extra70 = horarios[3]
-            elif len(horarios) == 3:
-                total_normais = horarios[0]
-                total_noturno = horarios[1]
-                extra70 = horarios[2]
-            elif len(horarios) == 2:
-                total_normais = horarios[0]
-                extra70 = horarios[1]
-            elif len(horarios) == 1:
-                total_normais = horarios[0]
-
-        else:
-            # Funcionário normal
-            if len(horarios) >= 5:
-                noturnas_normais = horarios[0]
-                total_normais = horarios[1]
-                total_noturno = horarios[2]
-                falta = horarios[3]
-                extra70 = horarios[4]
-            elif len(horarios) == 4:
-                total_normais = horarios[0]
-                total_noturno = horarios[1]
-                falta = horarios[2]
-                extra70 = horarios[3]
-            elif len(horarios) == 3:
-                total_normais = horarios[0]
-                total_noturno = horarios[1]
-                extra70 = horarios[2]
-            elif len(horarios) == 2:
-                total_normais = horarios[0]
-                extra70 = horarios[1]
-            elif len(horarios) == 1:
-                total_normais = horarios[0]
-
-        out.append({
-            "NOME": nome,
-            "CARGO": cargo,
-            "NOTURNAS NORMAIS": noturnas_normais,
-            "TOTAL NORMAIS": total_normais,
-            "TOTAL NOTURNO": total_noturno,
-            "FALTA": falta,
-            "ATRASO": "00:00",
-            "EXTRA 70%": extra70,
-        })
-
-    return out
+    if atualizados > 0:
+        st.success(f"Dados enviados para Google Sheets com sucesso! ({atualizados} funcionários atualizados)")
+    else:
+        st.warning("Nenhum funcionário foi encontrado na planilha.")
