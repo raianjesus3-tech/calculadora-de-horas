@@ -51,7 +51,7 @@ except Exception as e:
 
 try:
     # 🔴 COLE AQUI O LINK COMPLETO DA SUA PLANILHA
-    PLANILHA_URL = https://docs.google.com/spreadsheets/d/1er5DKT8jNm4qLTgQzdT2eQL8BrxxDlceUfkASYKYEZ8/edit?gid=0#gid=0
+    PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1er5DKT8jNm4qLTgQzdT2eQL8BrxxDlceUfkASYKYEZ8/edit?gid=0#gid=0"
 
     planilha = client.open_by_url(PLANILHA_URL)
 
