@@ -1,42 +1,41 @@
 import streamlit as st
+import pdfplumber
+import re
 import os
 import json
-import re
 import unicodedata
-import pdfplumber
 import gspread
 from google.oauth2.service_account import Credentials
 
-# ==========================================
-# CONFIGURAÇÃO GOOGLE
-# ==========================================
+st.set_page_config(page_title="Sistema Calculadora de Horas")
+
+st.title("🚀 Sistema Calculadora de Horas")
+st.subheader("📤 Enviar PDF de Espelho de Ponto")
+
+# =========================
+# GOOGLE AUTH
+# =========================
 
 scope = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
 
-if "GCP_SERVICE_ACCOUNT_JSON" not in os.environ:
-    st.error("❌ Variável GCP_SERVICE_ACCOUNT_JSON não encontrada.")
-    st.stop()
-
 creds_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"])
 creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
 client = gspread.authorize(creds)
 
-PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1er5DKT8jNm4qLTgQzdT2eQL8BrxxDlceUfkASYKYEZ8"
-spreadsheet = client.open_by_url(PLANILHA_URL)
+PLANILHA_URL = "COLE_AQUI_SUA_URL_DA_PLANILHA"
+planilha = client.open_by_url(PLANILHA_URL)
 
-# ==========================================
+# =========================
 # FUNÇÕES AUXILIARES
-# ==========================================
+# =========================
 
 def normalizar_nome(nome):
-    nome = nome.upper()
     nome = unicodedata.normalize("NFKD", nome)
-    nome = "".join([c for c in nome if not unicodedata.combining(c)])
-    nome = re.sub(r"\s+", " ", nome).strip()
-    return nome
+    nome = nome.encode("ASCII", "ignore").decode("utf-8")
+    return nome.upper().strip()
 
 def identificar_loja(texto):
     texto = texto.upper()
@@ -46,14 +45,30 @@ def identificar_loja(texto):
         return "JPBB"
     return None
 
+def extrair_texto_pdf(pdf_file):
+    texto_completo = ""
+    with pdfplumber.open(pdf_file) as pdf:
+        for pagina in pdf.pages:
+            texto_completo += pagina.extract_text() + "\n"
+    return texto_completo
+
+# =========================
+# EXTRAIR DADOS
+# =========================
+
 def extrair_dados_pdf(texto):
     funcionarios = {}
 
     blocos = texto.split("NOME DO FUNCIONÁRIO:")
 
     for bloco in blocos[1:]:
+
         linhas = bloco.strip().split("\n")
-        nome = linhas[0].strip()
+        linha_nome = linhas[0]
+
+        # 🔥 CORREÇÃO PRINCIPAL
+        nome = linha_nome.split("PIS DO FUNCIONÁRIO")[0].strip()
+        nome = normalizar_nome(nome)
 
         falta = re.search(r"FALTAS.*?(\d+:\d+)", bloco)
         extra = re.search(r"HORAS EXTRAS.*?(\d+:\d+)", bloco)
@@ -69,88 +84,75 @@ def extrair_dados_pdf(texto):
 
     return funcionarios
 
-# ==========================================
-# INTERFACE
-# ==========================================
+# =========================
+# ENVIAR PARA SHEETS
+# =========================
 
-st.title("🚀 Sistema Calculadora de Horas")
-st.header("📤 Enviar PDF de Espelho de Ponto")
+def enviar_para_planilha(funcionarios, aba_nome):
+    aba = planilha.worksheet(aba_nome)
 
-uploaded_file = st.file_uploader(
-    "Selecione o PDF da loja (JPBB ou TPBR)",
-    type="pdf"
-)
+    nomes_planilha = aba.col_values(1)
 
-if uploaded_file:
+    for nome_pdf, dados in funcionarios.items():
 
-    texto_completo = ""
+        nome_pdf_norm = normalizar_nome(nome_pdf)
 
-    with pdfplumber.open(uploaded_file) as pdf:
-        for pagina in pdf.pages:
-            texto_completo += pagina.extract_text() + "\n"
+        for i, nome_sheet in enumerate(nomes_planilha):
+            if normalizar_nome(nome_sheet) == nome_pdf_norm:
 
-    st.success("✅ PDF lido com sucesso!")
+                linha = i + 1
 
-    loja = identificar_loja(texto_completo)
+                # BLOCO NORMAL
+                if linha < 10:
+                    aba.update(f"B{linha}", dados["falta"])
+                    aba.update(f"C{linha}", dados["extra"])
+                    aba.update(f"E{linha}", dados["noturno"])
 
-    if not loja:
-        st.error("❌ Não foi possível identificar a loja.")
-        st.stop()
-
-    st.info(f"🏬 Loja identificada: {loja}")
-
-    mes = "JANEIRO"  # você pode depois automatizar isso
-    aba_nome = f"{mes}_{loja}"
-
-    worksheet = spreadsheet.worksheet(aba_nome)
-
-    st.info(f"📄 Dados irão para aba: {aba_nome}")
-
-    funcionarios = extrair_dados_pdf(texto_completo)
-
-    nao_encontrados = []
-
-    for nome_funcionario, dados in funcionarios.items():
-
-        nome_normalizado_pdf = normalizar_nome(nome_funcionario)
-
-        col_a = worksheet.col_values(1)
-
-        encontrado = False
-
-        for i, nome_planilha in enumerate(col_a):
-            nome_normalizado_planilha = normalizar_nome(nome_planilha)
-
-            if nome_normalizado_planilha == nome_normalizado_pdf:
-
-                linha_real = i + 1
-
-                # ==========================
-                # FUNCIONÁRIO NORMAL
-                # ==========================
-                if linha_real < 10:
-
-                    worksheet.update(f"B{linha_real}", dados["falta"])
-                    worksheet.update(f"C{linha_real}", dados["extra"])
-                    worksheet.update(f"E{linha_real}", dados["noturno"])
-
-                # ==========================
                 # BLOCO MOTOBOY
-                # ==========================
                 else:
+                    aba.update(f"C{linha}", dados["noturno"])
+                    aba.update(f"D{linha}", dados["horas"])
+                    aba.update(f"E{linha}", dados["extra"])
 
-                    worksheet.update(f"B{linha_real}", dados["noturno"])
-                    worksheet.update(f"C{linha_real}", dados["horas"])
-                    worksheet.update(f"D{linha_real}", dados["extra"])
-
-                encontrado = True
                 break
 
-        if not encontrado:
-            nao_encontrados.append(nome_funcionario)
+# =========================
+# UPLOAD PDF
+# =========================
+
+pdf_file = st.file_uploader("Selecione o PDF da loja (JPBB ou TPBR)", type=["pdf"])
+
+if pdf_file:
+
+    texto = extrair_texto_pdf(pdf_file)
+
+    loja = identificar_loja(texto)
+
+    if not loja:
+        st.error("❌ Loja não identificada no PDF.")
+        st.stop()
+
+    st.success(f"📌 Loja identificada: {loja}")
+
+    funcionarios = extrair_dados_pdf(texto)
+
+    mes = st.selectbox("Selecione o mês:", [
+        "JANEIRO",
+        "FEVEREIRO",
+        "MARÇO",
+        "ABRIL",
+        "MAIO",
+        "JUNHO",
+        "JULHO",
+        "AGOSTO",
+        "SETEMBRO",
+        "OUTUBRO",
+        "NOVEMBRO",
+        "DEZEMBRO"
+    ])
+
+    aba_nome = f"{mes}_{loja}"
+
+    enviar_para_planilha(funcionarios, aba_nome)
 
     st.success("🎉 Dados enviados para o Google Sheets com sucesso!")
-
-    if nao_encontrados:
-        st.warning("⚠ Alguns nomes não foram encontrados na planilha:")
-        st.write(nao_encontrados)
