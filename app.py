@@ -1,87 +1,77 @@
 import streamlit as st
 import pdfplumber
 import re
-import unicodedata
 import os
 import json
+import unicodedata
 import gspread
 from google.oauth2.service_account import Credentials
 
-# ===============================
+# ==========================================
 # CONFIG GOOGLE
-# ===============================
+# ==========================================
 
-creds_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"])
+PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1er5DKT8jNm4qLTgQzdT2eQL8BrxxDlceUfkASYKYEZ8/edit"
 
 scope = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
 
+creds_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"])
 creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
 client = gspread.authorize(creds)
 
-PLANILHA_ID = "1er5DKT8jNm4qLTgQzdT2eQL8BrxxDlceUfkASYKYEZ8"
-planilha = client.open_by_key(PLANILHA_ID)
+planilha = client.open_by_url(PLANILHA_URL)
 
-# ===============================
+# ==========================================
 # FUNÇÕES AUXILIARES
-# ===============================
+# ==========================================
 
-def normalizar(texto):
-    texto = unicodedata.normalize("NFKD", texto)
-    texto = texto.encode("ASCII", "ignore").decode("utf-8")
-    return texto.strip().upper()
+def normalizar_nome(nome):
+    nome = nome.upper().strip()
+    nome = unicodedata.normalize('NFKD', nome)
+    nome = "".join(c for c in nome if not unicodedata.combining(c))
+    nome = re.sub(r"\s+", " ", nome)
+    return nome
 
 def identificar_loja(texto):
     texto = texto.upper()
     if "TPBR" in texto:
         return "TPBR"
-    if "JPBB" in texto:
+    elif "JPBB" in texto:
         return "JPBB"
     return None
 
-def extrair_funcionarios(texto):
-    padrao = r"NOME DO FUNCIONÁRIO:\s*(.*?)\s*PIS"
-    nomes = re.findall(padrao, texto, re.IGNORECASE)
-    return nomes
+def extrair_totais(bloco):
+    horarios = re.findall(r"\d{1,3}:\d{2}", bloco)
 
-def extrair_totais(texto_bloco):
-    totais = {}
+    if len(horarios) >= 3:
+        return {
+            "falta": horarios[-3],
+            "extra": horarios[-2],
+            "noturno": horarios[-1]
+        }
 
-    falta = re.search(r"FALTAS?:\s*(\d+:\d+)", texto_bloco)
-    extra = re.search(r"HORAS EXTRAS?:\s*(\d+:\d+)", texto_bloco)
-    noturno = re.search(r"ADICIONAL NOTURNO?:\s*(\d+:\d+)", texto_bloco)
+    return {
+        "falta": "00:00",
+        "extra": "00:00",
+        "noturno": "00:00"
+    }
 
-    totais["falta"] = falta.group(1) if falta else "00:00"
-    totais["extra"] = extra.group(1) if extra else "00:00"
-    totais["noturno"] = noturno.group(1) if noturno else "00:00"
-
-    return totais
-
-def encontrar_linha_por_nome(aba, nome):
-    valores = aba.col_values(1)
-    nome_normalizado = normalizar(nome)
-
-    for i, valor in enumerate(valores):
-        if normalizar(valor) == nome_normalizado:
-            return i + 1
-    return None
-
-# ===============================
-# STREAMLIT
-# ===============================
+# ==========================================
+# INTERFACE
+# ==========================================
 
 st.title("🚀 Sistema Calculadora de Horas")
-st.subheader("📤 Enviar PDF de Espelho de Ponto")
 
-arquivo = st.file_uploader("Selecione o PDF", type="pdf")
+pdf_file = st.file_uploader("Selecione o PDF da loja (JPBB ou TPBR)", type="pdf")
 
-if arquivo:
+if pdf_file:
 
     texto_completo = ""
 
-    with pdfplumber.open(arquivo) as pdf:
+    with pdfplumber.open(pdf_file) as pdf:
         for pagina in pdf.pages:
             texto_completo += pagina.extract_text() + "\n"
 
@@ -90,48 +80,62 @@ if arquivo:
     loja = identificar_loja(texto_completo)
 
     if not loja:
-        st.error("Não foi possível identificar a loja.")
+        st.error("Loja não identificada no PDF.")
         st.stop()
 
     st.info(f"🏢 Loja identificada: {loja}")
 
-    aba_nome = f"JANEIRO_{loja}"
-    aba = planilha.worksheet(aba_nome)
+    mes = "JANEIRO"  # pode automatizar depois
+    nome_aba = f"{mes}_{loja}"
 
-    st.info(f"📄 Dados irão para aba: {aba_nome}")
+    st.info(f"📄 Dados irão para aba: {nome_aba}")
 
-    nomes = extrair_funcionarios(texto_completo)
-
-    if not nomes:
-        st.error("Nenhum funcionário encontrado no PDF.")
+    try:
+        aba = planilha.worksheet(nome_aba)
+    except:
+        st.error(f"Aba {nome_aba} não encontrada na planilha.")
         st.stop()
 
-    for nome in nomes:
+    linhas = aba.get_all_values()
 
-        st.write(f"👤 Processando: {nome}")
+    # pegar nomes da coluna A
+    nomes_planilha = {}
+    for i, linha in enumerate(linhas):
+        if linha and linha[0]:
+            nomes_planilha[normalizar_nome(linha[0])] = i + 1
 
-        # pega bloco específico do funcionário
-        bloco = texto_completo.split(nome)[1]
+    # dividir por funcionário
+    funcionarios_pdf = re.split(r"NOME DO FUNCIONARIO:", texto_completo)
 
-        totais = extrair_totais(bloco)
+    atualizados = 0
 
-        linha = encontrar_linha_por_nome(aba, nome)
+    for bloco in funcionarios_pdf:
 
-        if not linha:
-            st.warning(f"{nome} não encontrado na planilha.")
+        match_nome = re.search(r"([A-ZÁÉÍÓÚÂÊÔÃÕÇ ]+)", bloco)
+
+        if not match_nome:
             continue
 
-        # ===============================
-        # IDENTIFICAR SE É MOTOBOY
-        # ===============================
+        nome_pdf = normalizar_nome(match_nome.group(1))
 
-        if linha >= 12:  # motoboys começam abaixo da linha 10
-            aba.update(f"B{linha}", [[totais["falta"]]])
-            aba.update(f"C{linha}", [[totais["noturno"]]])
-            aba.update(f"D{linha}", [[totais["extra"]]])
-        else:
-            aba.update(f"B{linha}", [[totais["falta"]]])
-            aba.update(f"C{linha}", [[totais["extra"]]])
-            aba.update(f"E{linha}", [[totais["noturno"]]])
+        if nome_pdf in nomes_planilha:
 
-    st.success("🎉 Dados enviados para o Google Sheets com sucesso!")
+            linha_encontrada = nomes_planilha[nome_pdf]
+            totais = extrair_totais(bloco)
+
+            try:
+                aba.update(f"B{linha_encontrada}:E{linha_encontrada}", [[
+                    totais["falta"],
+                    totais["extra"],
+                    totais["extra"],  # coluna D
+                    totais["noturno"]
+                ]])
+                atualizados += 1
+
+            except Exception as e:
+                st.error(f"Erro ao atualizar {nome_pdf}: {e}")
+
+    if atualizados > 0:
+        st.success(f"Dados enviados para Google Sheets com sucesso! ({atualizados} funcionários atualizados)")
+    else:
+        st.warning("Nenhum funcionário foi encontrado na planilha.")
