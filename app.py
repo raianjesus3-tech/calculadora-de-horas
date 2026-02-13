@@ -3,6 +3,7 @@ import pdfplumber
 import re
 import pandas as pd
 from io import BytesIO
+import time
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
@@ -59,7 +60,6 @@ def parse_employee_blocks(texto: str) -> list[dict]:
             continue
         nome = nome_match.group(1).strip()
 
-        # Captura cargo corretamente
         cargo_match = re.search(r"NOME DO CARGO:\s*(.+)", bloco)
         cargo = cargo_match.group(1).split("\n")[0].strip().upper() if cargo_match else ""
 
@@ -95,11 +95,9 @@ def parse_employee_blocks(texto: str) -> list[dict]:
         out.append({
             "NOME": nome,
             "CARGO": cargo,
-            "NOTURNAS NORMAIS": noturnas_normais,
             "TOTAL NORMAIS": total_normais,
             "TOTAL NOTURNO": total_noturno,
             "FALTA": falta,
-            "ATRASO": atraso,
             "EXTRA 70%": extra70,
         })
 
@@ -107,14 +105,14 @@ def parse_employee_blocks(texto: str) -> list[dict]:
 
 
 # ==========================
-# Excel Formatado
+# Excel formatado
 # ==========================
-def build_excel(df_func: pd.DataFrame, df_moto: pd.DataFrame) -> BytesIO:
+def build_excel(df_func, df_moto):
     wb = Workbook()
     ws = wb.active
     ws.title = "RELATORIO"
 
-    thin = Side(style="thin", color="000000")
+    thin = Side(style="thin")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
     header_gray = PatternFill(start_color="BFBFBF", fill_type="solid")
@@ -122,14 +120,14 @@ def build_excel(df_func: pd.DataFrame, df_moto: pd.DataFrame) -> BytesIO:
 
     def style_cell(cell, bold=False, fill=None):
         cell.font = Font(bold=bold)
-        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.alignment = Alignment(horizontal="center")
         if fill:
             cell.fill = fill
         cell.border = border
 
-    # BLOCO FUNCIONÁRIOS
     start_row = 2
 
+    # BLOCO FUNCIONÁRIOS
     for col, name in enumerate(df_func.columns, start=1):
         c = ws.cell(row=start_row, column=col, value=name)
         style_cell(c, bold=True, fill=header_gray)
@@ -139,7 +137,7 @@ def build_excel(df_func: pd.DataFrame, df_moto: pd.DataFrame) -> BytesIO:
             c = ws.cell(row=r_idx, column=col_idx, value=value)
             style_cell(c)
 
-    # Título Motoboys
+    # TÍTULO MOTOBOYS
     row_title = start_row + len(df_func) + 3
     ws.merge_cells(start_row=row_title, start_column=1, end_row=row_title, end_column=4)
     t = ws.cell(row=row_title, column=1, value="MOTOBOYS HORISTAS")
@@ -174,8 +172,19 @@ def build_excel(df_func: pd.DataFrame, df_moto: pd.DataFrame) -> BytesIO:
 # EXECUÇÃO
 # ==========================
 if uploaded_file:
+
+    progress = st.progress(0)
+    status = st.empty()
+
+    status.text("🔄 Lendo PDF...")
     texto = extract_full_text(uploaded_file)
+    time.sleep(0.5)
+    progress.progress(40)
+
+    status.text("📊 Processando funcionários...")
     dados = parse_employee_blocks(texto)
+    time.sleep(0.5)
+    progress.progress(80)
 
     if not dados:
         st.error("Não encontrei funcionários no PDF.")
@@ -188,7 +197,6 @@ if uploaded_file:
         - df["FALTA"].apply(hhmm_to_minutes)
     ).apply(minutes_to_hhmm)
 
-    # Separar motoboys corretamente
     is_motoboy = df["CARGO"].astype(str).str.contains(r"\bMOTOBOY\b", regex=True, na=False)
 
     df_func = df[~is_motoboy][["NOME", "FALTA", "EXTRA 70%", "EXTRA OU FALTA", "TOTAL NOTURNO"]].copy()
@@ -198,7 +206,11 @@ if uploaded_file:
     df_moto = df_moto_raw[["NOME", "TOTAL NOTURNO", "TOTAL NORMAIS", "EXTRA 70%"]].copy()
     df_moto.columns = ["NOME", "NOTURNO", "HORAS", "EXTRA"]
 
-    st.success("✅ Relatório gerado com sucesso!")
+    status.text("📁 Gerando relatório final...")
+    time.sleep(0.5)
+    progress.progress(100)
+    status.text("✅ Finalizado!")
+
     st.subheader("FUNCIONÁRIOS")
     st.dataframe(df_func, use_container_width=True)
 
@@ -206,6 +218,7 @@ if uploaded_file:
     st.dataframe(df_moto, use_container_width=True)
 
     excel_buffer = build_excel(df_func, df_moto)
+
     st.download_button(
         "⬇️ Baixar Excel no modelo",
         data=excel_buffer,
