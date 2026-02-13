@@ -1,24 +1,37 @@
 import streamlit as st
 import os
 import json
+import gspread
+from google.oauth2.service_account import Credentials
 
-st.write("🚀 App iniciou")
+st.set_page_config(page_title="Calculadora de Horas", layout="wide")
+
+st.title("🚀 Sistema Calculadora de Horas")
+
+# ==================================================
+# 🔐 1. VERIFICAR VARIÁVEL DE AMBIENTE
+# ==================================================
+
+if "GCP_SERVICE_ACCOUNT_JSON" not in os.environ:
+    st.error("❌ Variável GCP_SERVICE_ACCOUNT_JSON NÃO encontrada.")
+    st.stop()
+
+# ==================================================
+# 📦 2. CARREGAR JSON DA SERVICE ACCOUNT
+# ==================================================
 
 try:
-    st.write("🔎 Verificando variável de ambiente...")
-
-    if "GCP_SERVICE_ACCOUNT_JSON" not in os.environ:
-        st.error("❌ Variável GCP_SERVICE_ACCOUNT_JSON NÃO encontrada.")
-        st.stop()
-
-    st.write("✅ Variável encontrada")
-
     creds_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"])
-    st.write("✅ JSON carregado com sucesso")
+except Exception as e:
+    st.error("❌ Erro ao carregar JSON:")
+    st.code(str(e))
+    st.stop()
 
-    import gspread
-    from google.oauth2.service_account import Credentials
+# ==================================================
+# 🔗 3. CONECTAR AO GOOGLE SHEETS
+# ==================================================
 
+try:
     scope = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
@@ -27,111 +40,71 @@ try:
     creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
     client = gspread.authorize(creds)
 
-    st.write("✅ Conectado ao Google Sheets")
-
 except Exception as e:
-    st.error("💥 ERRO NA INTEGRAÇÃO GOOGLE:")
+    st.error("❌ ERRO NA INTEGRAÇÃO GOOGLE:")
     st.code(str(e))
     st.stop()
 
-import re
+# ==================================================
+# 📄 4. ABRIR PLANILHA
+# ==================================================
 
-# ==========================
-# IDENTIFICAR LOJA
-# ==========================
-def identificar_loja(texto):
-    texto = texto.upper()
-    if "TPBR" in texto:
-        return "TPBR"
-    elif "JPBB" in texto:
-        return "JPBB"
-    return None
+try:
+    # 🔴 COLE AQUI O LINK COMPLETO DA SUA PLANILHA
+    PLANILHA_URL = https://docs.google.com/spreadsheets/d/1er5DKT8jNm4qLTgQzdT2eQL8BrxxDlceUfkASYKYEZ8/edit?gid=0#gid=0
 
+    planilha = client.open_by_url(PLANILHA_URL)
 
-# ==========================
-# IDENTIFICAR MÊS
-# ==========================
-def identificar_mes(texto):
-    match = re.search(r"DE\s+\d{2}/(\d{2})/\d{4}", texto)
-    if not match:
-        return None
+except Exception as e:
+    st.error("❌ Erro ao abrir planilha:")
+    st.code(str(e))
+    st.stop()
 
-    mes_num = int(match.group(1))
+# ==================================================
+# 🏬 5. ESCOLHER LOJA
+# ==================================================
 
-    meses = {
-        1: "JANEIRO",
-        2: "FEVEREIRO",
-        3: "MARCO",
-        4: "ABRIL",
-        5: "MAIO",
-        6: "JUNHO",
-        7: "JULHO",
-        8: "AGOSTO",
-        9: "SETEMBRO",
-        10: "OUTUBRO",
-        11: "NOVEMBRO",
-        12: "DEZEMBRO"
-    }
+st.sidebar.header("🏬 Selecionar Loja")
 
-    return meses.get(mes_num)
+loja = st.sidebar.selectbox(
+    "Escolha a loja:",
+    ["TPBR", "JPBB"]
+)
 
+# ==================================================
+# 📅 6. ESCOLHER MÊS
+# ==================================================
 
-# ==========================
-# ENVIAR PARA GOOGLE SHEETS
-# ==========================
-def enviar_para_sheets(df_func, df_moto, texto_pdf):
+abas_disponiveis = [aba.title for aba in planilha.worksheets()]
 
-    loja = identificar_loja(texto_pdf)
-    mes = identificar_mes(texto_pdf)
+abas_filtradas = [aba for aba in abas_disponiveis if loja in aba]
 
-    if not loja or not mes:
-        st.error("Não foi possível identificar loja ou mês no PDF.")
-        return
+if not abas_filtradas:
+    st.warning(f"⚠️ Nenhuma aba encontrada para {loja}")
+    st.stop()
 
-    nome_aba = f"{mes}_{loja}"
+aba_selecionada = st.sidebar.selectbox(
+    "Escolha o mês:",
+    abas_filtradas
+)
 
-    # Verifica se aba existe
-    abas_existentes = [ws.title for ws in spreadsheet.worksheets()]
+# ==================================================
+# 📊 7. CARREGAR DADOS DA ABA
+# ==================================================
 
-    if nome_aba not in abas_existentes:
-        worksheet = spreadsheet.add_worksheet(title=nome_aba, rows="100", cols="20")
-    else:
-        worksheet = spreadsheet.worksheet(nome_aba)
+try:
+    worksheet = planilha.worksheet(aba_selecionada)
+    dados = worksheet.get_all_records()
+except Exception as e:
+    st.error("❌ Erro ao carregar dados da aba:")
+    st.code(str(e))
+    st.stop()
 
-    # Limpa a aba antes de escrever
-    worksheet.clear()
+st.subheader(f"📄 Dados da aba: {aba_selecionada}")
 
-    # ==========================
-    # BLOCO FUNCIONÁRIOS
-    # ==========================
-    worksheet.update("A1", [["NOME", "FALTA", "EXTRA", "EXTRA OU FALTA", "NOTURNO"]])
+if dados:
+    st.dataframe(dados, use_container_width=True)
+else:
+    st.info("ℹ️ A aba está vazia.")
 
-    linha = 2
-    for _, row in df_func.iterrows():
-        worksheet.update(
-            f"A{linha}:E{linha}",
-            [[row["NOME"], row["FALTA"], row["EXTRA"], row["EXTRA OU FALTA"], row["NOTURNO"]]]
-        )
-        linha += 1
-
-    # ==========================
-    # BLOCO MOTOBOYS
-    # ==========================
-    linha += 1
-    worksheet.update(f"A{linha}", [["MOTOBOYS HORISTAS"]])
-    linha += 1
-
-    worksheet.update(
-        f"A{linha}:D{linha}",
-        [["NOME", "HORAS", "NOTURNO", "EXTRA"]]
-    )
-
-    linha += 1
-    for _, row in df_moto.iterrows():
-        worksheet.update(
-            f"A{linha}:D{linha}",
-            [[row["NOME"], row["HORAS"], row["NOTURNO"], row["EXTRA"]]]
-        )
-        linha += 1
-
-    st.success(f"Planilha atualizada com sucesso na aba {nome_aba} 🚀")
+st.success("✅ Sistema carregado com sucesso")
