@@ -1,37 +1,30 @@
 import streamlit as st
 import os
 import json
+import re
+import pdfplumber
 import gspread
 from google.oauth2.service_account import Credentials
 
-st.set_page_config(page_title="Calculadora de Horas", layout="wide")
+# ==========================================
+# CONFIGURAÇÃO INICIAL
+# ==========================================
+
+st.set_page_config(page_title="Sistema Calculadora de Horas", layout="wide")
 
 st.title("🚀 Sistema Calculadora de Horas")
 
-# ==================================================
-# 🔐 1. VERIFICAR VARIÁVEL DE AMBIENTE
-# ==================================================
-
-if "GCP_SERVICE_ACCOUNT_JSON" not in os.environ:
-    st.error("❌ Variável GCP_SERVICE_ACCOUNT_JSON NÃO encontrada.")
-    st.stop()
-
-# ==================================================
-# 📦 2. CARREGAR JSON DA SERVICE ACCOUNT
-# ==================================================
+# ==========================================
+# CONEXÃO GOOGLE SHEETS
+# ==========================================
 
 try:
+    if "GCP_SERVICE_ACCOUNT_JSON" not in os.environ:
+        st.error("❌ Variável GCP_SERVICE_ACCOUNT_JSON não encontrada.")
+        st.stop()
+
     creds_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"])
-except Exception as e:
-    st.error("❌ Erro ao carregar JSON:")
-    st.code(str(e))
-    st.stop()
 
-# ==================================================
-# 🔗 3. CONECTAR AO GOOGLE SHEETS
-# ==================================================
-
-try:
     scope = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
@@ -40,71 +33,82 @@ try:
     creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
     client = gspread.authorize(creds)
 
+    st.success("✅ Conectado ao Google Sheets")
+
 except Exception as e:
-    st.error("❌ ERRO NA INTEGRAÇÃO GOOGLE:")
+    st.error("❌ Erro na integração Google:")
     st.code(str(e))
     st.stop()
 
-# ==================================================
-# 📄 4. ABRIR PLANILHA
-# ==================================================
+# ==========================================
+# IDENTIFICAR LOJA
+# ==========================================
 
-try:
-    # 🔴 COLE AQUI O LINK COMPLETO DA SUA PLANILHA
-    PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1er5DKT8jNm4qLTgQzdT2eQL8BrxxDlceUfkASYKYEZ8/edit?gid=0#gid=0"
+def identificar_loja(texto):
+    texto = texto.upper()
+    if "TPBR" in texto:
+        return "TPBR"
+    elif "JPBB" in texto:
+        return "JPBB"
+    return None
 
-    planilha = client.open_by_url(PLANILHA_URL)
+# ==========================================
+# CONFIG PLANILHA
+# ==========================================
 
-except Exception as e:
-    st.error("❌ Erro ao abrir planilha:")
-    st.code(str(e))
-    st.stop()
+PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1er5DKT8jNm4qLTgQzdT2eQL8BrxxDlceUfkASYKYEZ8/edit#gid=0"
 
-# ==================================================
-# 🏬 5. ESCOLHER LOJA
-# ==================================================
+planilha = client.open_by_url(PLANILHA_URL)
 
-st.sidebar.header("🏬 Selecionar Loja")
+abas = planilha.worksheets()
+nomes_abas = [aba.title for aba in abas]
 
-loja = st.sidebar.selectbox(
-    "Escolha a loja:",
-    ["TPBR", "JPBB"]
-)
+aba_selecionada = st.selectbox("📄 Escolha a aba", nomes_abas)
 
-# ==================================================
-# 📅 6. ESCOLHER MÊS
-# ==================================================
+worksheet = planilha.worksheet(aba_selecionada)
 
-abas_disponiveis = [aba.title for aba in planilha.worksheets()]
+st.subheader(f"📊 Dados da aba: {aba_selecionada}")
 
-abas_filtradas = [aba for aba in abas_disponiveis if loja in aba]
-
-if not abas_filtradas:
-    st.warning(f"⚠️ Nenhuma aba encontrada para {loja}")
-    st.stop()
-
-aba_selecionada = st.sidebar.selectbox(
-    "Escolha o mês:",
-    abas_filtradas
-)
-
-# ==================================================
-# 📊 7. CARREGAR DADOS DA ABA
-# ==================================================
-
-try:
-    worksheet = planilha.worksheet(aba_selecionada)
-    dados = worksheet.get_all_records()
-except Exception as e:
-    st.error("❌ Erro ao carregar dados da aba:")
-    st.code(str(e))
-    st.stop()
-
-st.subheader(f"📄 Dados da aba: {aba_selecionada}")
+dados = worksheet.get_all_values()
 
 if dados:
-    st.dataframe(dados, use_container_width=True)
+    st.dataframe(dados)
 else:
-    st.info("ℹ️ A aba está vazia.")
+    st.warning("Aba vazia.")
 
-st.success("✅ Sistema carregado com sucesso")
+# ==========================================
+# UPLOAD DO PDF
+# ==========================================
+
+st.divider()
+st.subheader("📤 Enviar PDF de Espelho de Ponto")
+
+uploaded_file = st.file_uploader(
+    "Selecione o PDF da loja (JPBB ou TPBR)",
+    type=["pdf"]
+)
+
+if uploaded_file is not None:
+    st.success("✅ PDF enviado com sucesso!")
+
+    try:
+        with pdfplumber.open(uploaded_file) as pdf:
+            texto = ""
+            for page in pdf.pages:
+                conteudo = page.extract_text()
+                if conteudo:
+                    texto += conteudo + "\n"
+
+        loja_detectada = identificar_loja(texto)
+
+        if loja_detectada:
+            st.info(f"🏬 Loja detectada: {loja_detectada}")
+        else:
+            st.warning("⚠️ Não foi possível identificar a loja no PDF.")
+
+        st.subheader("📄 Prévia do conteúdo do PDF")
+        st.code(texto[:1500])
+
+    except Exception as e:
+        st.error("❌ Erro ao ler PDF:")
+        st.code(str(e))
