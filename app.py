@@ -2,226 +2,196 @@ import streamlit as st
 import pdfplumber
 import re
 import pandas as pd
-from io import BytesIO
-import time
+import os
+import json
+import gspread
+from google.oauth2.service_account import Credentials
+from datetime import datetime
 
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-
+# ==============================
+# CONFIG STREAMLIT
+# ==============================
 st.set_page_config(page_title="Leitor Cartão de Ponto", layout="centered")
 st.title("📄 Leitor Inteligente - Cartão de Ponto")
-st.write("Envie o PDF (TPBR ou JPBB).")
+st.write("Envie o PDF. O sistema separa Motoboys e integra automaticamente com Google Sheets.")
 
 uploaded_file = st.file_uploader("Enviar PDF", type=["pdf"])
 
+# ==============================
+# FUNÇÕES DE TEMPO
+# ==============================
 
-# ==========================
-# Funções auxiliares
-# ==========================
 def hhmm_to_minutes(hhmm: str) -> int:
     if not hhmm or ":" not in hhmm:
         return 0
     h, m = hhmm.split(":")
     return int(h) * 60 + int(m)
 
-
 def minutes_to_hhmm(minutes: int) -> str:
     sign = "-" if minutes < 0 else ""
     minutes = abs(minutes)
     return f"{sign}{minutes // 60:02d}:{minutes % 60:02d}"
 
+# ==============================
+# LEITURA PDF
+# ==============================
 
-# ==========================
-# Leitura com CACHE
-# ==========================
-@st.cache_data
-def extract_full_text(pdf_file) -> str:
+def extract_full_text(pdf_file):
     with pdfplumber.open(pdf_file) as pdf:
-        parts = []
+        text = ""
         for page in pdf.pages:
-            t = page.extract_text()
-            if t:
-                parts.append(t)
-    return "\n".join(parts)
+            content = page.extract_text()
+            if content:
+                text += content + "\n"
+        return text
 
+# ==============================
+# PARSER
+# ==============================
 
-@st.cache_data
-def parse_employee_blocks(texto: str):
-    blocos = re.split(r"\bCartão\s+de\s+Ponto\b", texto)
-    out = []
+def parse_employee_blocks(text):
+    blocks = re.split(r"\bCartão\s+de\s+Ponto\b", text)
+    data = []
 
-    for bloco in blocos:
-        if "NOME DO FUNCIONÁRIO:" not in bloco or "TOTAIS" not in bloco:
+    for block in blocks:
+        if "NOME DO FUNCIONÁRIO:" not in block or "TOTAIS" not in block:
             continue
 
-        nome_match = re.search(r"NOME DO FUNCIONÁRIO:\s*(.+?)\s+PIS", bloco)
+        nome_match = re.search(r"NOME DO FUNCIONÁRIO:\s*(.+?)\s+PIS", block)
         if not nome_match:
             continue
+
         nome = nome_match.group(1).strip()
 
-        cargo_match = re.search(r"NOME DO CARGO:\s*(.+)", bloco)
+        cargo_match = re.search(r"NOME DO CARGO:\s*(.+)", block)
         cargo = cargo_match.group(1).split("\n")[0].strip().upper() if cargo_match else ""
 
-        totais_match = re.search(r"TOTAIS\s+([0-9:\s]+)", bloco)
+        totais_match = re.search(r"TOTAIS\s+([0-9:\s]+)", block)
         if not totais_match:
             continue
 
         horarios = re.findall(r"\d{1,3}:\d{2}", totais_match.group(1))
 
+        noturnas_normais = "00:00"
         total_normais = "00:00"
         total_noturno = "00:00"
-        falta = "00:00"
+        falta_e_atraso = "00:00"
         extra70 = "00:00"
 
-        if len(horarios) == 5:
-            _, total_normais, total_noturno, falta, extra70 = horarios
+        if len(horarios) >= 5:
+            noturnas_normais, total_normais, total_noturno, falta_e_atraso, extra70 = horarios[:5]
         elif len(horarios) == 4:
-            total_normais, total_noturno, falta, extra70 = horarios
-        elif len(horarios) >= 6:
-            _, total_normais, total_noturno, falta, extra70 = horarios[:5]
+            total_normais, total_noturno, falta_e_atraso, extra70 = horarios
         elif len(horarios) == 3:
             total_normais, total_noturno, extra70 = horarios
-        elif len(horarios) == 2:
-            total_normais, extra70 = horarios
-        elif len(horarios) == 1:
-            total_normais = horarios[0]
 
-        out.append({
-            "NOME": nome,
-            "CARGO": cargo,
-            "TOTAL NORMAIS": total_normais,
-            "TOTAL NOTURNO": total_noturno,
-            "FALTA": falta,
-            "EXTRA 70%": extra70,
+        data.append({
+            "nome": nome,
+            "cargo": cargo,
+            "falta": falta_e_atraso,
+            "extra": extra70,
+            "noturno": total_noturno,
+            "horas": total_normais
         })
 
-    return out
+    return data
 
+# ==============================
+# GOOGLE SHEETS
+# ==============================
 
-# ==========================
-# Excel Formatado
-# ==========================
-def build_excel(df_func, df_moto):
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "RELATORIO"
+def conectar_google_sheets():
+    creds_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"])
 
-    thin = Side(style="thin")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
 
-    header_gray = PatternFill(start_color="BFBFBF", fill_type="solid")
-    title_yellow = PatternFill(start_color="FFFF00", fill_type="solid")
+    credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    client = gspread.authorize(credentials)
 
-    def style_cell(cell, bold=False, fill=None):
-        cell.font = Font(bold=bold)
-        cell.alignment = Alignment(horizontal="center")
-        if fill:
-            cell.fill = fill
-        cell.border = border
+    return client
 
-    start_row = 2
+def obter_nome_mes():
+    meses = {
+        1: "JANEIRO",
+        2: "FEVEREIRO",
+        3: "MARÇO",
+        4: "ABRIL",
+        5: "MAIO",
+        6: "JUNHO",
+        7: "JULHO",
+        8: "AGOSTO",
+        9: "SETEMBRO",
+        10: "OUTUBRO",
+        11: "NOVEMBRO",
+        12: "DEZEMBRO",
+    }
 
-    for col, name in enumerate(df_func.columns, start=1):
-        c = ws.cell(row=start_row, column=col, value=name)
-        style_cell(c, bold=True, fill=header_gray)
+    return meses[datetime.now().month]
 
-    for r_idx, row in enumerate(df_func.itertuples(index=False), start=start_row + 1):
-        for col_idx, value in enumerate(row, start=1):
-            c = ws.cell(row=r_idx, column=col_idx, value=value)
-            style_cell(c)
+def atualizar_planilha(dados_funcionarios, dados_motoboys):
 
-    row_title = start_row + len(df_func) + 3
-    ws.merge_cells(start_row=row_title, start_column=1, end_row=row_title, end_column=4)
-    t = ws.cell(row=row_title, column=1, value="MOTOBOYS HORISTAS")
-    style_cell(t, bold=True, fill=title_yellow)
-    ws.row_dimensions[row_title].height = 20
+    client = conectar_google_sheets()
 
-    header_row2 = row_title + 1
+    PLANILHA_ID = "1er5DKT8jNm4qLTgQzdT2eQL8BrxxDlceUfkASYKYEZ8"
+    planilha = client.open_by_key(PLANILHA_ID)
 
-    for col, name in enumerate(df_moto.columns, start=1):
-        c = ws.cell(row=header_row2, column=col, value=name)
-        style_cell(c, bold=True, fill=header_gray)
+    aba = planilha.worksheet(obter_nome_mes())
 
-    for r_idx, row in enumerate(df_moto.itertuples(index=False), start=header_row2 + 1):
-        for col_idx, value in enumerate(row, start=1):
-            c = ws.cell(row=r_idx, column=col_idx, value=value)
-            style_cell(c)
+    # FUNCIONÁRIOS
+    for i, func in enumerate(dados_funcionarios):
+        linha = 2 + i
 
-    buffer = BytesIO()
-    wb.save(buffer)
-    buffer.seek(0)
-    return buffer
+        extra_ou_falta = minutes_to_hhmm(
+            hhmm_to_minutes(func["extra"]) - hhmm_to_minutes(func["falta"])
+        )
 
+        aba.update(f"A{linha}:E{linha}", [[
+            func["nome"],
+            func["falta"],
+            func["extra"],
+            extra_ou_falta,
+            func["noturno"]
+        ]])
 
-# ==========================
-# PROCESSAMENTO
-# ==========================
-if uploaded_file and st.button("🚀 Processar PDF"):
+    # MOTOBOYS
+    for i, moto in enumerate(dados_motoboys):
+        linha = 11 + i
 
-    progress = st.progress(0)
-    status = st.empty()
+        aba.update(f"A{linha}:D{linha}", [[
+            moto["nome"],
+            moto["noturno"],
+            moto["horas"],
+            moto["extra"]
+        ]])
 
-    status.text("🔄 Lendo PDF...")
-    texto = extract_full_text(uploaded_file)
-    time.sleep(0.3)
-    progress.progress(40)
+# ==============================
+# EXECUÇÃO
+# ==============================
 
-    status.text("📊 Processando funcionários...")
-    dados = parse_employee_blocks(texto)
-    time.sleep(0.3)
-    progress.progress(80)
+if uploaded_file:
 
-    if not dados:
-        st.error("Não encontrei funcionários no PDF.")
-        st.stop()
+    with st.spinner("🔄 Processando PDF e integrando com planilha..."):
+        
+        text = extract_full_text(uploaded_file)
+        data = parse_employee_blocks(text)
 
-    df = pd.DataFrame(dados)
+        if not data:
+            st.error("Nenhum funcionário encontrado no PDF.")
+            st.stop()
 
-    df["EXTRA OU FALTA"] = (
-        df["EXTRA 70%"].apply(hhmm_to_minutes)
-        - df["FALTA"].apply(hhmm_to_minutes)
-    ).apply(minutes_to_hhmm)
+        # Separar Motoboys
+        funcionarios = [d for d in data if "MOTOBOY" not in d["cargo"]]
+        motoboys = [d for d in data if "MOTOBOY" in d["cargo"]]
 
-    is_motoboy = df["CARGO"].str.contains("MOTOBOY", na=False)
+        atualizar_planilha(funcionarios, motoboys)
 
-    df_func = df[~is_motoboy][["NOME", "FALTA", "EXTRA 70%", "EXTRA OU FALTA", "TOTAL NOTURNO"]].copy()
-    df_func.columns = ["NOME", "FALTA", "EXTRA", "EXTRA OU FALTA", "NOTURNO"]
+    st.success("✅ Planilha atualizada com sucesso!")
 
-    df_moto_raw = df[is_motoboy].copy()
-    df_moto = df_moto_raw[["NOME", "TOTAL NOTURNO", "TOTAL NORMAIS", "EXTRA 70%"]].copy()
-    df_moto.columns = ["NOME", "NOTURNO", "HORAS", "EXTRA"]
+    st.subheader("Funcionários")
+    st.dataframe(pd.DataFrame(funcionarios))
 
-    status.text("✅ Finalizado!")
-    progress.progress(100)
-
-    st.divider()
-
-    st.subheader("📊 RESUMO GERAL")
-
-    col1, col2 = st.columns(2)
-    col1.metric("Funcionários", len(df_func))
-    col2.metric("Motoboys", len(df_moto))
-
-    total_extra = df_func["EXTRA"].apply(hhmm_to_minutes).sum()
-    total_falta = df_func["FALTA"].apply(hhmm_to_minutes).sum()
-
-    col3, col4 = st.columns(2)
-    col3.metric("Total Extra", minutes_to_hhmm(total_extra))
-    col4.metric("Total Falta", minutes_to_hhmm(total_falta))
-
-    st.divider()
-
-    st.subheader("FUNCIONÁRIOS")
-    st.dataframe(df_func, use_container_width=True)
-
-    st.subheader("MOTOBOYS HORISTAS")
-    st.dataframe(df_moto, use_container_width=True)
-
-    excel_buffer = build_excel(df_func, df_moto)
-
-    st.download_button(
-        "⬇️ Baixar Excel",
-        data=excel_buffer,
-        file_name="Relatorio_Modelo.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+    st.subheader("Motoboys")
+    st.dataframe(pd.DataFrame(motoboys))
