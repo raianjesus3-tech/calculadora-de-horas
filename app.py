@@ -1,158 +1,168 @@
 import streamlit as st
-import pdfplumber
-import re
 import os
 import json
+import re
 import unicodedata
+import pdfplumber
 import gspread
 from google.oauth2.service_account import Credentials
 
+# ==========================================================
+# CONFIGURAÇÃO GOOGLE SHEETS
+# ==========================================================
+
 st.set_page_config(page_title="Sistema Calculadora de Horas")
 
-st.title("🚀 Sistema Calculadora de Horas")
-st.subheader("📤 Enviar PDF de Espelho de Ponto")
+# 🔑 Conexão segura com variável de ambiente
+if "GCP_SERVICE_ACCOUNT_JSON" not in os.environ:
+    st.error("Variável GCP_SERVICE_ACCOUNT_JSON não encontrada.")
+    st.stop()
 
-# =========================
-# GOOGLE AUTH
-# =========================
+creds_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"])
 
 scope = [
     "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
+    "https://www.googleapis.com/auth/drive",
 ]
 
-creds_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"])
 creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
 client = gspread.authorize(creds)
 
-PLANILHA_URL = "COLE_AQUI_SUA_URL_DA_PLANILHA"
-planilha = client.open_by_url(PLANILHA_URL)
+# 🔐 USANDO OPEN_BY_KEY (NUNCA MAIS DÁ ERRO)
+planilha = client.open_by_key("1er5DKT8jNm4qLTgQzdT2eQL8BrxxDlceUfkASYKYEZ8")
 
-# =========================
+# ==========================================================
 # FUNÇÕES AUXILIARES
-# =========================
+# ==========================================================
 
 def normalizar_nome(nome):
     nome = unicodedata.normalize("NFKD", nome)
     nome = nome.encode("ASCII", "ignore").decode("utf-8")
-    return nome.upper().strip()
+    nome = nome.upper().strip()
+    return nome
+
 
 def identificar_loja(texto):
     texto = texto.upper()
     if "TPBR" in texto:
         return "TPBR"
-    if "JPBB" in texto:
+    elif "JPBB" in texto:
         return "JPBB"
     return None
 
-def extrair_texto_pdf(pdf_file):
-    texto_completo = ""
-    with pdfplumber.open(pdf_file) as pdf:
-        for pagina in pdf.pages:
-            texto_completo += pagina.extract_text() + "\n"
-    return texto_completo
 
-# =========================
-# EXTRAIR DADOS
-# =========================
+# ==========================================================
+# INTERFACE
+# ==========================================================
 
-def extrair_dados_pdf(texto):
-    funcionarios = {}
+st.title("🚀 Sistema Calculadora de Horas")
+st.subheader("📤 Enviar PDF de Espelho de Ponto")
 
-    blocos = texto.split("NOME DO FUNCIONÁRIO:")
+pdf = st.file_uploader("Selecione o PDF da loja (JPBB ou TPBR)", type=["pdf"])
 
-    for bloco in blocos[1:]:
+if pdf:
 
-        linhas = bloco.strip().split("\n")
-        linha_nome = linhas[0]
+    with pdfplumber.open(pdf) as arquivo:
+        texto = ""
+        for pagina in arquivo.pages:
+            texto += pagina.extract_text() + "\n"
 
-        # 🔥 CORREÇÃO PRINCIPAL
-        nome = linha_nome.split("PIS DO FUNCIONÁRIO")[0].strip()
-        nome = normalizar_nome(nome)
-
-        falta = re.search(r"FALTAS.*?(\d+:\d+)", bloco)
-        extra = re.search(r"HORAS EXTRAS.*?(\d+:\d+)", bloco)
-        noturno = re.search(r"HORAS NOTURNAS.*?(\d+:\d+)", bloco)
-        horas = re.search(r"HORAS TRABALHADAS.*?(\d+:\d+)", bloco)
-
-        funcionarios[nome] = {
-            "falta": falta.group(1) if falta else "00:00",
-            "extra": extra.group(1) if extra else "00:00",
-            "noturno": noturno.group(1) if noturno else "00:00",
-            "horas": horas.group(1) if horas else "00:00"
-        }
-
-    return funcionarios
-
-# =========================
-# ENVIAR PARA SHEETS
-# =========================
-
-def enviar_para_planilha(funcionarios, aba_nome):
-    aba = planilha.worksheet(aba_nome)
-
-    nomes_planilha = aba.col_values(1)
-
-    for nome_pdf, dados in funcionarios.items():
-
-        nome_pdf_norm = normalizar_nome(nome_pdf)
-
-        for i, nome_sheet in enumerate(nomes_planilha):
-            if normalizar_nome(nome_sheet) == nome_pdf_norm:
-
-                linha = i + 1
-
-                # BLOCO NORMAL
-                if linha < 10:
-                    aba.update(f"B{linha}", dados["falta"])
-                    aba.update(f"C{linha}", dados["extra"])
-                    aba.update(f"E{linha}", dados["noturno"])
-
-                # BLOCO MOTOBOY
-                else:
-                    aba.update(f"C{linha}", dados["noturno"])
-                    aba.update(f"D{linha}", dados["horas"])
-                    aba.update(f"E{linha}", dados["extra"])
-
-                break
-
-# =========================
-# UPLOAD PDF
-# =========================
-
-pdf_file = st.file_uploader("Selecione o PDF da loja (JPBB ou TPBR)", type=["pdf"])
-
-if pdf_file:
-
-    texto = extrair_texto_pdf(pdf_file)
+    st.success("PDF lido com sucesso!")
 
     loja = identificar_loja(texto)
 
     if not loja:
-        st.error("❌ Loja não identificada no PDF.")
+        st.error("Não foi possível identificar a loja no PDF.")
         st.stop()
 
-    st.success(f"📌 Loja identificada: {loja}")
+    st.info(f"🏬 Loja identificada: {loja}")
 
-    funcionarios = extrair_dados_pdf(texto)
+    # ===============================
+    # IDENTIFICAR MÊS
+    # ===============================
 
-    mes = st.selectbox("Selecione o mês:", [
-        "JANEIRO",
-        "FEVEREIRO",
-        "MARÇO",
-        "ABRIL",
-        "MAIO",
-        "JUNHO",
-        "JULHO",
-        "AGOSTO",
-        "SETEMBRO",
-        "OUTUBRO",
-        "NOVEMBRO",
-        "DEZEMBRO"
-    ])
+    mes = None
+
+    if "01/2026" in texto:
+        mes = "JANEIRO"
+    elif "02/2026" in texto:
+        mes = "FEVEREIRO"
+    elif "03/2026" in texto:
+        mes = "MARÇO"
+
+    if not mes:
+        st.error("Não foi possível identificar o mês.")
+        st.stop()
 
     aba_nome = f"{mes}_{loja}"
 
-    enviar_para_planilha(funcionarios, aba_nome)
+    st.info(f"📄 Dados irão para aba: {aba_nome}")
+
+    aba = planilha.worksheet(aba_nome)
+
+    # ===============================
+    # IDENTIFICAR FUNCIONÁRIO
+    # ===============================
+
+    nomes_pdf = re.findall(r"NOME DO FUNCIONÁRIO:\s*(.+)", texto)
+
+    if not nomes_pdf:
+        st.error("Funcionário não encontrado no PDF.")
+        st.stop()
+
+    nome_funcionario = normalizar_nome(nomes_pdf[0])
+
+    st.write(f"👤 Funcionário identificado: {nome_funcionario}")
+
+    # ===============================
+    # BUSCAR NA PLANILHA
+    # ===============================
+
+    coluna_a = aba.col_values(1)
+
+    linha_funcionario = None
+
+    for i, nome in enumerate(coluna_a):
+        if normalizar_nome(nome) == nome_funcionario:
+            linha_funcionario = i + 1
+            break
+
+    if not linha_funcionario:
+        st.error("Funcionário não encontrado na planilha.")
+        st.stop()
+
+    # ===============================
+    # EXTRAIR HORAS (RESUMO FINAL)
+    # ===============================
+
+    extra = re.findall(r"EXTRAS\s+(\d+:\d+)", texto)
+    falta = re.findall(r"FALTAS\s+(\d+:\d+)", texto)
+    noturno = re.findall(r"ADICIONAL NOTURNO\s+(\d+:\d+)", texto)
+
+    extra = extra[0] if extra else "00:00"
+    falta = falta[0] if falta else "00:00"
+    noturno = noturno[0] if noturno else "00:00"
+
+    # ===============================
+    # VERIFICAR SE É MOTOBOY
+    # ===============================
+
+    coluna_a_upper = [normalizar_nome(n) for n in coluna_a]
+
+    try:
+        indice_bloco = coluna_a_upper.index("MOTOBOYS HORISTAS")
+    except:
+        indice_bloco = None
+
+    if indice_bloco and linha_funcionario > indice_bloco + 1:
+        # BLOCO MOTOBOY
+        aba.update_cell(linha_funcionario, 2, noturno)
+        aba.update_cell(linha_funcionario, 3, extra)
+        aba.update_cell(linha_funcionario, 4, "00:00")
+    else:
+        # BLOCO NORMAL
+        aba.update_cell(linha_funcionario, 2, falta)
+        aba.update_cell(linha_funcionario, 3, extra)
+        aba.update_cell(linha_funcionario, 5, noturno)
 
     st.success("🎉 Dados enviados para o Google Sheets com sucesso!")
