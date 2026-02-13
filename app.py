@@ -1,5 +1,38 @@
 import streamlit as st
+import os
+import json
+
 st.write("🚀 App iniciou")
+
+try:
+    st.write("🔎 Verificando variável de ambiente...")
+
+    if "GCP_SERVICE_ACCOUNT_JSON" not in os.environ:
+        st.error("❌ Variável GCP_SERVICE_ACCOUNT_JSON NÃO encontrada.")
+        st.stop()
+
+    st.write("✅ Variável encontrada")
+
+    creds_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"])
+    st.write("✅ JSON carregado com sucesso")
+
+    import gspread
+    from google.oauth2.service_account import Credentials
+
+    scope = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+    client = gspread.authorize(creds)
+
+    st.write("✅ Conectado ao Google Sheets")
+
+except Exception as e:
+    st.error("💥 ERRO NA INTEGRAÇÃO GOOGLE:")
+    st.code(str(e))
+    st.stop()
 
 import re
 
