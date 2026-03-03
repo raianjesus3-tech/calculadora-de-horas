@@ -80,7 +80,7 @@ def detectar_mes_ano(texto: str):
 def extract_sheet_id(url: str) -> str:
     m = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", url)
     if not m:
-        raise RuntimeError("Não consegui extrair o ID da planilha do link.")
+        raise RuntimeError("Não consegui extrair o ID da planilha.")
     return m.group(1)
 
 # =========================
@@ -96,7 +96,7 @@ def extract_full_text(pdf_file) -> str:
     return "\n".join(parts)
 
 # =========================
-# Parser por funcionário
+# Parser
 # =========================
 def parse_employee_blocks(texto: str):
 
@@ -123,7 +123,6 @@ def parse_employee_blocks(texto: str):
 
         horarios = re.findall(r"-?\d{1,3}:\d{2}", totais_match.group(1))
 
-        noturnas_normais = "00:00"
         total_normais = "00:00"
         total_noturno = "00:00"
         falta = "00:00"
@@ -135,7 +134,6 @@ def parse_employee_blocks(texto: str):
 
             if len(horarios) >= 4:
 
-                # ignorar primeiro valor
                 total_normais = horarios[1]
                 total_noturno = horarios[2]
                 extra70 = horarios[3]
@@ -144,19 +142,28 @@ def parse_employee_blocks(texto: str):
 
             if len(horarios) == 5:
 
-                noturnas_normais, total_normais, total_noturno, falta, extra70 = horarios
+                total_normais = horarios[1]
+                total_noturno = horarios[2]
+                falta = horarios[3]
+                extra70 = horarios[4]
 
             elif len(horarios) == 4:
 
-                total_normais, total_noturno, falta, extra70 = horarios
+                total_normais = horarios[0]
+                total_noturno = horarios[1]
+                falta = horarios[2]
+                extra70 = horarios[3]
 
             elif len(horarios) == 3:
 
-                total_normais, total_noturno, extra70 = horarios
+                total_normais = horarios[0]
+                total_noturno = horarios[1]
+                extra70 = horarios[2]
 
             elif len(horarios) == 2:
 
-                total_normais, extra70 = horarios
+                total_normais = horarios[0]
+                extra70 = horarios[1]
 
             elif len(horarios) == 1:
 
@@ -180,10 +187,9 @@ def parse_employee_blocks(texto: str):
 def get_gspread_client():
 
     if ENV_KEY_JSON not in os.environ:
-        raise RuntimeError("Credenciais do Google não encontradas.")
+        raise RuntimeError("Credenciais Google não encontradas.")
 
     creds_dict = json.loads(os.environ[ENV_KEY_JSON])
-
     creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
 
     return gspread.authorize(creds)
@@ -191,9 +197,7 @@ def get_gspread_client():
 def get_sheet_and_tab(client, planilha_url: str, tab_name: str):
 
     sheet_id = extract_sheet_id(planilha_url)
-
     sh = client.open_by_key(sheet_id)
-
     ws = sh.worksheet(tab_name)
 
     return sh, ws
@@ -201,7 +205,6 @@ def get_sheet_and_tab(client, planilha_url: str, tab_name: str):
 def map_name_to_rows(ws):
 
     colA = ws.col_values(1)
-
     mapping = {}
 
     for idx, val in enumerate(colA, start=1):
@@ -225,19 +228,15 @@ def update_rows(ws, df: pd.DataFrame):
     for i, v in enumerate(colA, start=1):
 
         if "MOTOBOYS HORISTAS" in str(v).upper():
-
             motoboy_title_row = i
-
             break
 
     for _, row in df.iterrows():
 
         nome_pdf_norm = normalize_name(str(row["NOME"]))
-
         sheet_row = name_map.get(nome_pdf_norm)
 
         if not sheet_row:
-
             continue
 
         cargo = str(row.get("CARGO", "")).upper()
@@ -268,9 +267,7 @@ def update_rows(ws, df: pd.DataFrame):
 # UI
 # =========================
 st.title("🚀 Sistema Calculadora de Horas")
-
 st.subheader("📤 Enviar PDF de Espelho de Ponto")
-
 st.caption("Selecione o PDF da loja (JPBB ou TPBR).")
 
 uploaded_file = st.file_uploader("Enviar PDF", type=["pdf"])
@@ -282,7 +279,6 @@ if uploaded_file:
     st.success("PDF lido com sucesso!")
 
     loja = identificar_loja(texto)
-
     mes, ano = detectar_mes_ano(texto)
 
     tab_name = f"{mes}_{loja}"
@@ -294,7 +290,6 @@ if uploaded_file:
     st.dataframe(df)
 
     client = get_gspread_client()
-
     _, ws = get_sheet_and_tab(client, PLANILHA_URL, tab_name)
 
     if st.button("Enviar para planilha"):
