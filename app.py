@@ -48,7 +48,6 @@ def minutes_to_hhmm(minutes: int) -> str:
 
     return f"{sign}{minutes // 60:02d}:{minutes % 60:02d}"
 
-
 # =========================
 # TEXTO
 # =========================
@@ -69,7 +68,6 @@ def normalize_name(s: str) -> str:
 
     return s
 
-
 # =========================
 # LOJA
 # =========================
@@ -84,7 +82,6 @@ def identificar_loja(texto: str):
         return "JPBB"
 
     return None
-
 
 # =========================
 # MÊS
@@ -120,7 +117,6 @@ def detectar_mes_ano(texto: str):
 
     return meses.get(mes_num), ano
 
-
 # =========================
 # PDF
 # =========================
@@ -139,34 +135,6 @@ def extract_full_text(pdf_file):
 
         return "\n".join(text)
 
-
-# =========================
-# FUNÇÃO PRINCIPAL DE LEITURA
-# =========================
-def find_time_for_label(section: str, label: str):
-
-    lines = section.split("\n")
-
-    for i, line in enumerate(lines):
-
-        if label in line.upper():
-
-            # tenta mesma linha
-            m = re.search(r"-?\d{1,3}:\d{2}", line)
-            if m:
-                return m.group()
-
-            # tenta linha abaixo
-            if i + 1 < len(lines):
-
-                m = re.search(r"-?\d{1,3}:\d{2}", lines[i + 1])
-
-                if m:
-                    return m.group()
-
-    return "00:00"
-
-
 # =========================
 # PARSER
 # =========================
@@ -178,7 +146,7 @@ def parse_employee_blocks(texto: str):
 
     for bloco in blocos:
 
-        if "NOME DO FUNCION" not in bloco.upper():
+        if ("NOME DO FUNCION" not in bloco.upper()) or ("TOTAIS" not in bloco.upper()):
             continue
 
         nome_match = re.search(
@@ -200,15 +168,36 @@ def parse_employee_blocks(texto: str):
 
         cargo = cargo_match.group(1).split("\n")[0].strip() if cargo_match else ""
 
-        section = bloco.upper()
+        totais_match = re.search(
+            r"TOTAIS([\s\S]{0,200})",
+            bloco,
+            flags=re.IGNORECASE
+        )
 
-        total_normais = find_time_for_label(section, "TOTAL NORMAIS")
+        if not totais_match:
+            continue
 
-        total_noturno = find_time_for_label(section, "TOTAL NOTURNO")
+        totais = totais_match.group(1)
 
-        falta = find_time_for_label(section, "FALTA E ATRASO")
+        horarios = re.findall(r"\d{1,3}:\d{2}", totais)
 
-        extra = find_time_for_label(section, "EXTRA 70%")
+        total_normais = "00:00"
+        total_noturno = "00:00"
+        falta = "00:00"
+        extra = "00:00"
+
+        if len(horarios) >= 4:
+
+            total_normais = horarios[0]
+            total_noturno = horarios[1]
+            falta = horarios[2]
+            extra = horarios[3]
+
+        elif len(horarios) == 3:
+
+            total_normais = horarios[0]
+            total_noturno = horarios[1]
+            extra = horarios[2]
 
         out.append({
             "NOME": nome,
@@ -220,7 +209,6 @@ def parse_employee_blocks(texto: str):
         })
 
     return out
-
 
 # =========================
 # GOOGLE SHEETS
@@ -237,13 +225,11 @@ def get_gspread_client():
 
     return gspread.authorize(creds)
 
-
 def extract_sheet_id(url):
 
     m = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
 
     return m.group(1)
-
 
 def get_sheet_and_tab(client, url, tab):
 
@@ -254,7 +240,6 @@ def get_sheet_and_tab(client, url, tab):
     ws = sh.worksheet(tab)
 
     return ws
-
 
 def map_name_to_rows(ws):
 
@@ -270,7 +255,6 @@ def map_name_to_rows(ws):
             mapping[n] = i
 
     return mapping
-
 
 # =========================
 # ENVIO
@@ -302,11 +286,8 @@ def update_rows(ws, df):
         is_motoboy = "MOTOBOY" in cargo or sheet_row > motoboy_row
 
         falta = row["FALTA"]
-
         extra = row["EXTRA 70%"]
-
         noturno = row["TOTAL NOTURNO"]
-
         horas = row["TOTAL NORMAIS"]
 
         extra_ou_falta = minutes_to_hhmm(
@@ -316,21 +297,15 @@ def update_rows(ws, df):
         if is_motoboy:
 
             ws.update(f"B{sheet_row}", [[horas]])
-
             ws.update(f"C{sheet_row}", [[noturno]])
-
             ws.update(f"D{sheet_row}", [[extra]])
 
         else:
 
             ws.update(f"B{sheet_row}", [[falta]])
-
             ws.update(f"C{sheet_row}", [[extra]])
-
             ws.update(f"D{sheet_row}", [[extra_ou_falta]])
-
             ws.update(f"E{sheet_row}", [[noturno]])
-
 
 # =========================
 # UI
