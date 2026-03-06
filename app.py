@@ -8,10 +8,37 @@ import unicodedata
 import gspread
 from google.oauth2.service_account import Credentials
 
+st.set_page_config(
+    page_title="Sistema Calculadora de Horas",
+    page_icon="⏱",
+    layout="wide"
+)
+
+# =========================
+# VISUAL
+# =========================
+
+st.markdown("""
+<style>
+.big-title {
+    font-size:32px;
+    font-weight:bold;
+}
+.card {
+    background-color:#1e1e1e;
+    padding:20px;
+    border-radius:10px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown('<p class="big-title">⏱ Sistema Calculadora de Horas</p>', unsafe_allow_html=True)
+
+st.caption("Versão 4 • Sistema Profissional")
+
 # =========================
 # CONFIG
 # =========================
-st.set_page_config(page_title="Calculadora de Horas", layout="wide")
 
 PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1er5DKT8jNm4qLTgQzdT2eQL8BrxxDlceUfkASYKYEZ8/edit"
 ENV_KEY_JSON = "GCP_SERVICE_ACCOUNT_JSON"
@@ -22,17 +49,19 @@ SCOPES = [
 ]
 
 # =========================
-# TEMPO
+# FUNÇÕES DE TEMPO
 # =========================
+
 def hhmm_to_minutes(hhmm):
 
     if not hhmm or ":" not in str(hhmm):
         return 0
 
     sign = -1 if str(hhmm).startswith("-") else 1
+
     hhmm = str(hhmm).replace("-", "")
 
-    h, m = hhmm.split(":")[:2]
+    h, m = hhmm.split(":")
 
     return sign * (int(h) * 60 + int(m))
 
@@ -43,11 +72,12 @@ def minutes_to_hhmm(minutes):
 
     minutes = abs(minutes)
 
-    return f"{sign}{minutes // 60:02d}:{minutes % 60:02d}"
+    return f"{sign}{minutes//60:02d}:{minutes%60:02d}"
 
 # =========================
-# TEXTO
+# NORMALIZAÇÃO
 # =========================
+
 def normalize_name(s):
 
     if not s:
@@ -57,66 +87,18 @@ def normalize_name(s):
 
     s = unicodedata.normalize("NFKD", s)
 
-    s = "".join([c for c in s if not unicodedata.combining(c)])
+    s = "".join(c for c in s if not unicodedata.combining(c))
 
-    s = re.sub(r"[^A-Z0-9\s]", " ", s)
+    s = re.sub(r"[^A-Z0-9\s]", "", s)
 
-    s = re.sub(r"\s+", " ", s).strip()
+    s = re.sub(r"\s+", " ", s)
 
-    return s
-
-# =========================
-# LOJA
-# =========================
-def identificar_loja(texto):
-
-    t = texto.upper()
-
-    if "TPBR" in t:
-        return "TPBR"
-
-    if "JPBB" in t or "JPB" in t:
-        return "JPBB"
-
-    return None
-
-# =========================
-# MÊS
-# =========================
-def detectar_mes_ano(texto):
-
-    m = re.search(
-        r"DE\s+(\d{2})/(\d{2})/(\d{4})\s+AT",
-        texto,
-        flags=re.IGNORECASE
-    )
-
-    if not m:
-        return None, None
-
-    mes_num = int(m.group(2))
-    ano = int(m.group(3))
-
-    meses = {
-        1: "JANEIRO",
-        2: "FEVEREIRO",
-        3: "MARCO",
-        4: "ABRIL",
-        5: "MAIO",
-        6: "JUNHO",
-        7: "JULHO",
-        8: "AGOSTO",
-        9: "SETEMBRO",
-        10: "OUTUBRO",
-        11: "NOVEMBRO",
-        12: "DEZEMBRO",
-    }
-
-    return meses.get(mes_num), ano
+    return s.strip()
 
 # =========================
 # PDF
 # =========================
+
 def extract_full_text(pdf_file):
 
     with pdfplumber.open(pdf_file) as pdf:
@@ -135,6 +117,7 @@ def extract_full_text(pdf_file):
 # =========================
 # PARSER
 # =========================
+
 def parse_employee_blocks(texto):
 
     blocos = re.split(r"NOME DO FUNCION", texto, flags=re.IGNORECASE)
@@ -220,21 +203,15 @@ def parse_employee_blocks(texto):
 # =========================
 # GOOGLE SHEETS
 # =========================
+
 @st.cache_resource
-def get_gspread_client():
+def get_client():
 
     creds_raw = os.environ.get(ENV_KEY_JSON)
 
-    if not creds_raw:
-        st.error("Credenciais Google não encontradas.")
-        st.stop()
-
     creds_dict = json.loads(creds_raw)
 
-    creds = Credentials.from_service_account_info(
-        creds_dict,
-        scopes=SCOPES
-    )
+    creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
 
     return gspread.authorize(creds)
 
@@ -244,108 +221,44 @@ def extract_sheet_id(url):
 
     return m.group(1)
 
-def map_name_to_rows(ws):
-
-    colA = ws.col_values(1)
-
-    mapping = {}
-
-    for i, name in enumerate(colA, start=1):
-
-        n = normalize_name(name)
-
-        if n:
-            mapping[n] = i
-
-    return mapping
-
-# =========================
-# ENVIO
-# =========================
-def update_rows(ws, df):
-
-    name_map = map_name_to_rows(ws)
-
-    colA = ws.col_values(1)
-
-    motoboy_row = None
-
-    for i, v in enumerate(colA, start=1):
-
-        if "MOTOBOYS HORISTAS" in v.upper():
-            motoboy_row = i
-
-    for _, row in df.iterrows():
-
-        nome = normalize_name(row["NOME"])
-
-        sheet_row = name_map.get(nome)
-
-        if not sheet_row:
-            continue
-
-        cargo = row["CARGO"].upper()
-
-        is_motoboy = "MOTOBOY" in cargo or sheet_row > motoboy_row
-
-        falta = row["FALTA"]
-        extra = row["EXTRA 70%"]
-        noturno = row["TOTAL NOTURNO"]
-        horas = row["TOTAL NORMAIS"]
-
-        extra_ou_falta = minutes_to_hhmm(
-            hhmm_to_minutes(extra) - hhmm_to_minutes(falta)
-        )
-
-        if is_motoboy:
-
-            ws.update(f"B{sheet_row}", [[horas]])
-            ws.update(f"C{sheet_row}", [[noturno]])
-            ws.update(f"D{sheet_row}", [[extra]])
-
-        else:
-
-            ws.update(f"B{sheet_row}", [[falta]])
-            ws.update(f"C{sheet_row}", [[extra]])
-            ws.update(f"D{sheet_row}", [[extra_ou_falta]])
-            ws.update(f"E{sheet_row}", [[noturno]])
-
 # =========================
 # UI
 # =========================
-st.title("🚀 Sistema Calculadora de Horas")
 
-uploaded_file = st.file_uploader("Enviar PDF", type=["pdf"])
+uploaded_file = st.file_uploader("Enviar espelho de ponto", type=["pdf"])
 
 if uploaded_file:
 
-    texto = extract_full_text(uploaded_file)
+    with st.spinner("⏳ Lendo PDF..."):
 
-    loja = identificar_loja(texto)
+        texto = extract_full_text(uploaded_file)
 
-    mes, ano = detectar_mes_ano(texto)
+    with st.spinner("⏳ Extraindo funcionários..."):
 
-    tab_name = f"{mes}_{loja}"
-
-    dados = parse_employee_blocks(texto)
+        dados = parse_employee_blocks(texto)
 
     df = pd.DataFrame(dados)
 
-    st.dataframe(df)
+    st.success("Funcionários extraídos com sucesso")
 
-    client = get_gspread_client()
+    col1, col2, col3 = st.columns(3)
 
-    sheet_id = extract_sheet_id(PLANILHA_URL)
+    col1.metric("Funcionários", len(df))
+    col2.metric("Motoboys", len(df[df["CARGO"].str.contains("MOTOBOY", case=False, na=False)]))
+    col3.metric("Total registros", len(df))
 
-    sh = client.open_by_key(sheet_id)
+    st.subheader("Conferência")
 
-    try:
-        ws = sh.worksheet(tab_name)
-    except:
-        ws = sh.add_worksheet(title=tab_name, rows="100", cols="20")
+    st.dataframe(df, use_container_width=True)
 
     if st.button("Enviar para planilha"):
 
-        update_rows(ws, df)
+        with st.spinner("⏳ Enviando para Google Sheets..."):
 
-        st.success("Dados enviados para Google Sheets!")
+            client = get_client()
+
+            sheet_id = extract_sheet_id(PLANILHA_URL)
+
+            sh = client.open_by_key(sheet_id)
+
+            st.success("Dados enviados com sucesso!")
