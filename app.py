@@ -29,12 +29,8 @@ def hhmm_to_minutes(hhmm):
     if not hhmm or ":" not in str(hhmm):
         return 0
 
-    hhmm = str(hhmm)
-
-    sign = -1 if hhmm.startswith("-") else 1
-
-    if sign == -1:
-        hhmm = hhmm[1:]
+    sign = -1 if str(hhmm).startswith("-") else 1
+    hhmm = str(hhmm).replace("-", "")
 
     h, m = hhmm.split(":")[:2]
 
@@ -211,14 +207,12 @@ def parse_employee_blocks(texto):
             extra = horarios[4]
 
         out.append({
-
             "NOME": nome,
             "CARGO": cargo,
             "TOTAL NORMAIS": total_normais,
             "TOTAL NOTURNO": total_noturno,
             "FALTA": falta,
             "EXTRA 70%": extra
-
         })
 
     return out
@@ -232,8 +226,8 @@ def get_gspread_client():
     creds_raw = os.environ.get(ENV_KEY_JSON)
 
     if not creds_raw:
-        st.warning("⚠️ Google Sheets não conectado.")
-        return None
+        st.error("Credenciais Google não encontradas.")
+        st.stop()
 
     creds_dict = json.loads(creds_raw)
 
@@ -244,19 +238,82 @@ def get_gspread_client():
 
     return gspread.authorize(creds)
 
-
 def extract_sheet_id(url):
 
     m = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
 
     return m.group(1)
 
+def map_name_to_rows(ws):
+
+    colA = ws.col_values(1)
+
+    mapping = {}
+
+    for i, name in enumerate(colA, start=1):
+
+        n = normalize_name(name)
+
+        if n:
+            mapping[n] = i
+
+    return mapping
+
+# =========================
+# ENVIO
+# =========================
+def update_rows(ws, df):
+
+    name_map = map_name_to_rows(ws)
+
+    colA = ws.col_values(1)
+
+    motoboy_row = None
+
+    for i, v in enumerate(colA, start=1):
+
+        if "MOTOBOYS HORISTAS" in v.upper():
+            motoboy_row = i
+
+    for _, row in df.iterrows():
+
+        nome = normalize_name(row["NOME"])
+
+        sheet_row = name_map.get(nome)
+
+        if not sheet_row:
+            continue
+
+        cargo = row["CARGO"].upper()
+
+        is_motoboy = "MOTOBOY" in cargo or sheet_row > motoboy_row
+
+        falta = row["FALTA"]
+        extra = row["EXTRA 70%"]
+        noturno = row["TOTAL NOTURNO"]
+        horas = row["TOTAL NORMAIS"]
+
+        extra_ou_falta = minutes_to_hhmm(
+            hhmm_to_minutes(extra) - hhmm_to_minutes(falta)
+        )
+
+        if is_motoboy:
+
+            ws.update(f"B{sheet_row}", [[horas]])
+            ws.update(f"C{sheet_row}", [[noturno]])
+            ws.update(f"D{sheet_row}", [[extra]])
+
+        else:
+
+            ws.update(f"B{sheet_row}", [[falta]])
+            ws.update(f"C{sheet_row}", [[extra]])
+            ws.update(f"D{sheet_row}", [[extra_ou_falta]])
+            ws.update(f"E{sheet_row}", [[noturno]])
+
 # =========================
 # UI
 # =========================
 st.title("🚀 Sistema Calculadora de Horas")
-
-st.write("Sistema iniciado com sucesso")
 
 uploaded_file = st.file_uploader("Enviar PDF", type=["pdf"])
 
@@ -268,6 +325,8 @@ if uploaded_file:
 
     mes, ano = detectar_mes_ano(texto)
 
+    tab_name = f"{mes}_{loja}"
+
     dados = parse_employee_blocks(texto)
 
     df = pd.DataFrame(dados)
@@ -276,22 +335,17 @@ if uploaded_file:
 
     client = get_gspread_client()
 
-    if client:
+    sheet_id = extract_sheet_id(PLANILHA_URL)
 
-        sheet_id = extract_sheet_id(PLANILHA_URL)
+    sh = client.open_by_key(sheet_id)
 
-        sh = client.open_by_key(sheet_id)
-
-        tab_name = f"{mes}_{loja}"
-
+    try:
         ws = sh.worksheet(tab_name)
+    except:
+        ws = sh.add_worksheet(title=tab_name, rows="100", cols="20")
 
-        if st.button("Enviar para planilha"):
+    if st.button("Enviar para planilha"):
 
-            for i, row in df.iterrows():
+        update_rows(ws, df)
 
-                nome = normalize_name(row["NOME"])
-
-                st.write(nome)
-
-            st.success("Envio concluído!")
+        st.success("Dados enviados para Google Sheets!")
