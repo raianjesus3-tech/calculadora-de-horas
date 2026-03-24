@@ -21,7 +21,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<p class="big-title">⏱ Sistema Calculadora de Horas</p>', unsafe_allow_html=True)
-st.caption("Versão 8 • Sistema Profissional")
+st.caption("Versão 9 • Sistema Profissional")
 
 # =========================
 # CONFIG
@@ -354,7 +354,7 @@ def enviar_para_planilha(df, aba_nome, loja):
                 aba.update(f"D{linha}", [[row.get("EXTRA 70%", "")]])
         else:
             # Celetistas (igual em ambas as lojas)
-            aba.update(f"B{linha}", [[row.get("FALTA (dias)", "")]])
+            aba.update(f"B{linha}", [[row.get("FALTA E ATRASO", "")]])
             aba.update(f"C{linha}", [[row.get("EXTRA 70%", "")]])
             aba.update(f"D{linha}", [[row.get("EXTRA OU FALTA", "")]])
             aba.update(f"E{linha}", [[row.get("TOTAL NOTURNO", "")]])
