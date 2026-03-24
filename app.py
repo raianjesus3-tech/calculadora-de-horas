@@ -44,6 +44,10 @@ LOJAS = {
     "TPBR": ["TPBR"],
 }
 
+# -------------------------------------------------------
+# MAPEAMENTO JPBB: nome normalizado -> linha na planilha
+# Celetistas: linhas 2-8  |  Motoboys: linhas 11-13
+# -------------------------------------------------------
 MAPA_LINHAS_JPBB = {
     "ADRIAN LOPES LIMA": 2,
     "CAIANE DE LIMA MEIRELES DA SILVA": 3,
@@ -52,11 +56,16 @@ MAPA_LINHAS_JPBB = {
     "PABLO HENRIQUE MACEDO NASCIMENTO": 6,
     "VICTOR EDUARDO MACEDO NASCIMENTO": 7,
     "YURI CRUZ DA SILVA": 8,
+    # Motoboys horistas
     "CAIO DE JESUS DA SILVA": 11,
     "MARCOS CRISPIM DOS SANTOS OLIVEIRA": 12,
     "UBIRATAN SANTOS DE JESUS": 13,
 }
 
+# -------------------------------------------------------
+# MAPEAMENTO TPBR: nome normalizado -> linha na planilha
+# Celetistas: linhas 2-11  |  Motoboys: linhas 13-15
+# -------------------------------------------------------
 MAPA_LINHAS_TPBR = {
     "ANDREIA GOMES DOS SANTOS": 2,
     "DILSON ALVES VASCONCELLOS": 3,
@@ -68,11 +77,15 @@ MAPA_LINHAS_TPBR = {
     "SAMARA FARIAS DOS SANTOS": 9,
     "SAULO TADEU FARIAS DOS SANTOS": 10,
     "VITORIA LUIZA HUGHES DE FREITAS": 11,
+    # Motoboys horistas
     "ADRIANO ARAUJO TEIXEIRA": 13,
     "MARCIO OLIVEIRA MUNIZ": 14,
     "WILLIAM DOS SANTOS SILVA": 15,
 }
 
+# -------------------------------------------------------
+# TEMPLATES para criação automática de aba nova
+# -------------------------------------------------------
 TEMPLATE_JPBB = [
     ["NOME", "FALTA", "EXTRA", "EXTRA OU FALTA", "NOTURNO"],
     ["ADRIAN LOPES LIMA", "", "", "", ""],
@@ -136,7 +149,7 @@ def normalize_name(s):
         return ""
     s = s.strip().upper()
     s = unicodedata.normalize("NFKD", s)
-    s = "".join(c for c in s if not [unicodedata.com](https://unicodedata.com)bining(c))
+    s = "".join(c for c in s if not unicodedata.combining(c))
     s = re.sub(r"[^A-Z0-9\s]", "", s)
     return re.sub(r"\s+", " ", s).strip()
 
@@ -177,6 +190,7 @@ def parse_totais(tokens):
     if inteiros:
         result["FALTA (dias)"] = str(inteiros[0])
 
+    # Descartar campo NOTURNAS NORMAIS (extra da TPBR): primeiro token << segundo
     if len(horas) >= 2:
         h1 = hhmm_to_min(horas[0])
         h2 = hhmm_to_min(horas[1])
@@ -230,7 +244,7 @@ def parse_page(text):
     totais_line = totais_match.group(1).strip()
     tokens = []
     for t in re.findall(r'\d{1,3}:\d{2}|\b\d{1,2}\b', totais_line):
-        [tokens.app](https://tokens.app)end(("h", t) if ":" in t else ("i", int(t)))
+        tokens.append(("h", t) if ":" in t else ("i", int(t)))
 
     campos = parse_totais(tokens)
 
@@ -261,7 +275,7 @@ def extract_pdf(pdf_file):
                 data["LOJA"] = loja
                 data["MES"] = mes_num
                 data["ANO"] = ano
-                [results.app](https://results.app)end(data)
+                results.append(data)
     return results, loja, mes_num, ano
 
 # =========================
@@ -281,16 +295,33 @@ def extract_sheet_id(url):
     return m.group(1) if m else None
 
 def garantir_aba(sh, aba_nome, loja):
+    """
+    Retorna a aba. Se não existir, cria com o template correto da loja.
+    """
     try:
         return sh.worksheet(aba_nome), False
     except gspread.WorksheetNotFound:
         pass
+
     nova_aba = sh.add_worksheet(title=aba_nome, rows=30, cols=10)
     template = TEMPLATE_JPBB if loja == "JPBB" else TEMPLATE_TPBR
     nova_aba.update("A1", template)
     return nova_aba, True
 
 def enviar_para_planilha(df, aba_nome, loja):
+    """
+    Envia os dados para a planilha. Cria a aba automaticamente se não existir.
+
+    JPBB — Celetistas (linhas 2-8):
+        B = FALTA (dias)  |  C = EXTRA 70%  |  D = EXTRA OU FALTA  |  E = NOTURNO
+    JPBB — Motoboys (linhas 11-13):
+        B = NOTURNO  |  C = HORAS (TOTAL NORMAIS)  |  D = EXTRA 70%
+
+    TPBR — Celetistas (linhas 2-11):
+        B = FALTA (dias)  |  C = EXTRA 70%  |  D = EXTRA OU FALTA  |  E = NOTURNO
+    TPBR — Motoboys (linhas 13-15):
+        B = HORAS (TOTAL NORMAIS)  |  C = NOTURNO  |  D = EXTRA 70%
+    """
     client = get_client()
     sheet_id = extract_sheet_id(PLANILHA_URL)
     sh = client.open_by_key(sheet_id)
@@ -307,19 +338,22 @@ def enviar_para_planilha(df, aba_nome, loja):
         linha = mapa.get(nome_norm)
 
         if not linha:
-            [erros.app](https://erros.app)end(f"⚠️ {row['NOME']} — não encontrado no mapeamento")
+            erros.append(f"⚠️ {row['NOME']} — não encontrado no mapeamento")
             continue
 
         if is_moto:
             if loja == "JPBB":
+                # JPBB motoboy: B=NOTURNO, C=HORAS, D=EXTRA
                 aba.update(f"B{linha}", [[row.get("TOTAL NOTURNO", "")]])
                 aba.update(f"C{linha}", [[row.get("TOTAL NORMAIS", "")]])
                 aba.update(f"D{linha}", [[row.get("EXTRA 70%", "")]])
             else:
+                # TPBR motoboy: B=HORAS, C=NOTURNO, D=EXTRA
                 aba.update(f"B{linha}", [[row.get("TOTAL NORMAIS", "")]])
                 aba.update(f"C{linha}", [[row.get("TOTAL NOTURNO", "")]])
                 aba.update(f"D{linha}", [[row.get("EXTRA 70%", "")]])
         else:
+            # Celetistas (igual em ambas as lojas)
             aba.update(f"B{linha}", [[row.get("FALTA (dias)", "")]])
             aba.update(f"C{linha}", [[row.get("EXTRA 70%", "")]])
             aba.update(f"D{linha}", [[row.get("EXTRA OU FALTA", "")]])
@@ -347,7 +381,7 @@ if uploaded_files:
             dados, loja, mes_num, ano = extract_pdf(uploaded_file)
             todos_dados.extend(dados)
             aba_auto = gerar_nome_aba(loja, mes_num, ano)
-            infos_[pdfs.app](https://pdfs.app)end({
+            infos_pdfs.append({
                 "arquivo": uploaded_file.name,
                 "loja": loja,
                 "mes": mes_num,
@@ -363,13 +397,13 @@ if uploaded_files:
     for info in infos_pdfs:
         mes_nome = MESES_PT.get(info["mes"], "?") if info["mes"] else "?"
         aba = info["aba_sugerida"] or "não detectada"
-        [st.info](https://st.info)(f"**{info['arquivo']}** → Loja: `{info['loja']}` | Mês: `{mes_nome}/{info['ano']}` | Aba: `{aba}`")
+        st.info(f"**{info['arquivo']}** → Loja: `{info['loja']}` | Mês: `{mes_nome}/{info['ano']}` | Aba: `{aba}`")
 
     col1, col2, col3, col4 = st.columns(4)
-    [col1.me](https://col1.me)tric("Total funcionários", len(df))
-    [col2.me](https://col2.me)tric("Motoboys", len(df[df["CARGO"].str.contains("MOTOBOY", case=False, na=False)]))
-    [col3.me](https://col3.me)tric("Com falta", len(df[df["FALTA (dias)"].astype(str) != "0"]))
-    [col4.me](https://col4.me)tric("Com extra", len(df[df["EXTRA 70%"] != ""]))
+    col1.metric("Total funcionários", len(df))
+    col2.metric("Motoboys", len(df[df["CARGO"].str.contains("MOTOBOY", case=False, na=False)]))
+    col3.metric("Com falta", len(df[df["FALTA (dias)"].astype(str) != "0"]))
+    col4.metric("Com extra", len(df[df["EXTRA 70%"] != ""]))
 
     st.subheader("📋 Conferência dos dados")
     colunas_exibir = ["NOME", "CARGO", "EMPRESA", "FALTA (dias)", "EXTRA 70%", "EXTRA OU FALTA", "TOTAL NOTURNO", "TOTAL NORMAIS", "OBS"]
@@ -420,7 +454,7 @@ if uploaded_files:
                         try:
                             enviados, erros, foi_criada = enviar_para_planilha(df_loja, aba_input, info["loja"])
                             if foi_criada:
-                                [st.info](https://st.info)(f"📋 Aba **'{aba_input}'** não existia — foi criada automaticamente!")
+                                st.info(f"📋 Aba **'{aba_input}'** não existia — foi criada automaticamente com o template!")
                             if enviados:
                                 st.success(f"✅ {enviados} funcionários enviados para **'{aba_input}'**!")
                             if erros:
