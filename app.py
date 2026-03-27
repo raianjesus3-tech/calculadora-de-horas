@@ -21,7 +21,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<p class="big-title">⏱ Sistema Calculadora de Horas</p>', unsafe_allow_html=True)
-st.caption("Versão 9 • Sistema Profissional")
+st.caption("Versão 12 • Sistema Profissional")
 
 # =========================
 # CONFIG
@@ -180,6 +180,15 @@ def gerar_nome_aba(loja, mes_num, ano):
 # PARSER
 # =========================
 def parse_totais(tokens):
+    """
+    Parser universal Control iD — JPBB e TPBR.
+
+    Após descarte de NOTURNAS_NORMAIS (se existir):
+        TOTAL_NORMAIS | [NOTURNO >= 19h] | [FALTA_ATRASO] | [EXTRA_70]
+
+    Descarte NOTURNAS_NORMAIS: h1 < 80h E h2 >= 100h.
+    Distinção NOTURNO vs FALTA: valores >= 19h são NOTURNO.
+    """
     result = {
         "TOTAL NORMAIS": "", "TOTAL NOTURNO": "",
         "FALTA (dias)": "0", "FALTA E ATRASO": "", "EXTRA 70%": "",
@@ -190,27 +199,26 @@ def parse_totais(tokens):
     if inteiros:
         result["FALTA (dias)"] = str(inteiros[0])
 
-    # Descartar campo NOTURNAS NORMAIS (extra da TPBR): primeiro token << segundo
+    # Descartar NOTURNAS_NORMAIS: se primeiro token < segundo, é campo auxiliar
     if len(horas) >= 2:
-        h1 = hhmm_to_min(horas[0])
-        h2 = hhmm_to_min(horas[1])
-        if h1 < h2 and h1 < 80 * 60:
+        if hhmm_to_min(horas[0]) < hhmm_to_min(horas[1]):
             horas = horas[1:]
 
-    if len(horas) >= 1:
-        result["TOTAL NORMAIS"] = horas[0]
-    if len(horas) >= 2:
-        if hhmm_to_min(horas[1]) < 60:
-            result["FALTA E ATRASO"] = horas[1]
+    if not horas:
+        return result
+
+    # Primeiro campo sempre é TOTAL NORMAIS
+    result["TOTAL NORMAIS"] = horas[0]
+
+    # Restante: >= 19h → NOTURNO | < 19h → primeiro FALTA, depois EXTRA
+    for h in horas[1:]:
+        v = hhmm_to_min(h)
+        if v >= 19 * 60 and not result["TOTAL NOTURNO"]:
+            result["TOTAL NOTURNO"] = h
+        elif not result["FALTA E ATRASO"]:
+            result["FALTA E ATRASO"] = h
         else:
-            result["TOTAL NOTURNO"] = horas[1]
-    if len(horas) >= 3:
-        if not result["FALTA E ATRASO"]:
-            result["FALTA E ATRASO"] = horas[2]
-        else:
-            result["EXTRA 70%"] = horas[2]
-    if len(horas) >= 4:
-        result["EXTRA 70%"] = horas[3]
+            result["EXTRA 70%"] = h
 
     return result
 
@@ -250,7 +258,7 @@ def parse_page(text):
 
     falt_min = hhmm_to_min(campos["FALTA E ATRASO"])
     extra_min = hhmm_to_min(campos["EXTRA 70%"])
-    saldo = falt_min - extra_min
+    saldo = extra_min - falt_min
     saldo_str = min_to_hhmm(saldo) if (falt_min or extra_min) else ""
 
     return {
