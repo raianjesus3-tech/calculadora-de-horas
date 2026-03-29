@@ -21,7 +21,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<p class="big-title">⏱ Sistema Calculadora de Horas</p>', unsafe_allow_html=True)
-st.caption("Versão 12 • Sistema Profissional")
+st.caption("Versão 13 • Sistema Profissional")
 
 # =========================
 # CONFIG
@@ -77,10 +77,10 @@ MAPA_LINHAS_TPBR = {
     "SAMARA FARIAS DOS SANTOS": 9,
     "SAULO TADEU FARIAS DOS SANTOS": 10,
     "VITORIA LUIZA HUGHES DE FREITAS": 11,
-    # Motoboys horistas
-    "ADRIANO ARAUJO TEIXEIRA": 13,
-    "MARCIO OLIVEIRA MUNIZ": 14,
-    "WILLIAM DOS SANTOS SILVA": 15,
+    # Motoboys horistas (linha 12 = MOTOBOYS HORISTAS, linha 13 = cabeçalho)
+    "ADRIANO ARAUJO TEIXEIRA": 14,
+    "MARCIO OLIVEIRA MUNIZ": 15,
+    "WILLIAM DOS SANTOS SILVA": 16,
 }
 
 # -------------------------------------------------------
