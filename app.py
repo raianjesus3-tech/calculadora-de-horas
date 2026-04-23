@@ -22,7 +22,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<p class="big-title">⏱ Sistema Calculadora de Horas</p>', unsafe_allow_html=True)
-st.caption("Versão 14.0 • Sistema Profissional com Parser Inteligente")
+st.caption("Versão 15.0 • Sistema Profissional com Detecção de Colunas")
 
 # =========================
 # CONFIG
@@ -45,109 +45,41 @@ LOJAS = {
     "TPBR": ["TPBR"],
 }
 
-# -------------------------------------------------------
-# MAPEAMENTO JPBB: nome normalizado -> linha na planilha
-# -------------------------------------------------------
 MAPA_LINHAS_JPBB = {
-    "ADRIAN LOPES LIMA": 2,
-    "CAIANE DE LIMA MEIRELES DA SILVA": 3,
-    "DRIELLE DE JESUS CERQUEIRA": 4,
-    "ERICK CERQUEIRA FERREIRA": 5,
-    "PABLO HENRIQUE MACEDO NASCIMENTO": 6,
-    "VICTOR EDUARDO MACEDO NASCIMENTO": 7,
-    "YURI CRUZ DA SILVA": 8,
-    "CAIO DE JESUS DA SILVA": 11,
-    "MARCOS CRISPIM DOS SANTOS OLIVEIRA": 12,
+    "ADRIAN LOPES LIMA": 2, "CAIANE DE LIMA MEIRELES DA SILVA": 3, "DRIELLE DE JESUS CERQUEIRA": 4,
+    "ERICK CERQUEIRA FERREIRA": 5, "PABLO HENRIQUE MACEDO NASCIMENTO": 6, "VICTOR EDUARDO MACEDO NASCIMENTO": 7,
+    "YURI CRUZ DA SILVA": 8, "CAIO DE JESUS DA SILVA": 11, "MARCOS CRISPIM DOS SANTOS OLIVEIRA": 12,
     "UBIRATAN SANTOS DE JESUS": 13,
 }
 
-# -------------------------------------------------------
-# MAPEAMENTO TPBR: nome normalizado -> linha na planilha
-# -------------------------------------------------------
 MAPA_LINHAS_TPBR = {
-    "ANDREIA GOMES DOS SANTOS": 2,
-    "DILSON ALVES VASCONCELLOS": 3,
-    "ELEN SILVA DE JESUS": 4,
-    "KAUAN VITOR DA ROCHA SANTOS": 5,
-    "MARCOS ANTONIO DOS SANTOS DIAS": 6,
-    "RAIAN DE JESUS GONCALVES": 7,
-    "RODRIGO DE SOUZA PAIVA": 8,
-    "SAMARA FARIAS DOS SANTOS": 9,
-    "SAULO TADEU FARIAS DOS SANTOS": 10,
-    "VITORIA LUIZA HUGHES DE FREITAS": 11,
-    "ADRIANO ARAUJO TEIXEIRA": 14,
-    "MARCIO OLIVEIRA MUNIZ": 15,
+    "ANDREIA GOMES DOS SANTOS": 2, "DILSON ALVES VASCONCELLOS": 3, "ELEN SILVA DE JESUS": 4,
+    "KAUAN VITOR DA ROCHA SANTOS": 5, "MARCOS ANTONIO DOS SANTOS DIAS": 6, "RAIAN DE JESUS GONCALVES": 7,
+    "RODRIGO DE SOUZA PAIVA": 8, "SAMARA FARIAS DOS SANTOS": 9, "SAULO TADEU FARIAS DOS SANTOS": 10,
+    "VITORIA LUIZA HUGHES DE FREITAS": 11, "ADRIANO ARAUJO TEIXEIRA": 14, "MARCIO OLIVEIRA MUNIZ": 15,
     "WILLIAM DOS SANTOS SILVA": 16,
 }
-
-# -------------------------------------------------------
-# TEMPLATES para criação automática de aba nova
-# -------------------------------------------------------
-TEMPLATE_JPBB = [
-    ["NOME", "FALTA", "EXTRA", "EXTRA OU FALTA", "NOTURNO"],
-    ["ADRIAN LOPES LIMA", "", "", "", ""],
-    ["CAIANE DE LIMA MEIRELES DA SILVA", "", "", "", ""],
-    ["DRIELLE DE JESUS CERQUEIRA", "", "", "", ""],
-    ["ERICK CERQUEIRA FERREIRA", "", "", "", ""],
-    ["PABLO HENRIQUE MACEDO NASCIMENTO", "", "", "", ""],
-    ["VICTOR EDUARDO MACEDO NASCIMENTO", "", "", "", ""],
-    ["YURI CRUZ DA SILVA", "", "", "", ""],
-    ["", "", "", "", ""],
-    ["MOTOBOYS HORISTAS", "", "", "", ""],
-    ["NOME", "NOTURNO", "HORAS", "EXTRA", ""],
-    ["CAIO DE JESUS DA SILVA", "", "", "", ""],
-    ["MARCOS CRISPIM DOS SANTOS OLIVEIRA", "", "", "", ""],
-    ["UBIRATAN SANTOS DE JESUS", "", "", "", ""],
-]
-
-TEMPLATE_TPBR = [
-    ["NOME", "FALTA", "EXTRA", "EXTRA OU FALTA", "NOTURNO"],
-    ["ANDREIA GOMES DOS SANTOS", "", "", "", ""],
-    ["DILSON ALVES VASCONCELLOS", "", "", "", ""],
-    ["ELEN SILVA DE JESUS", "", "", "", ""],
-    ["KAUAN VITOR DA ROCHA SANTOS", "", "", "", ""],
-    ["MARCOS ANTONIO DOS SANTOS DIAS", "", "", "", ""],
-    ["RAIAN DE JESUS GONCALVES", "", "", "", ""],
-    ["RODRIGO DE SOUZA PAIVA", "", "", "", ""],
-    ["SAMARA FARIAS DOS SANTOS", "", "", "", ""],
-    ["SAULO TADEU FARIAS DOS SANTOS", "", "", "", ""],
-    ["VITORIA LUIZA HUGHES DE FREITAS", "", "", "", ""],
-    ["", "", "", "", ""],
-    ["MOTOBOYS HORISTAS", "", "", "", ""],
-    ["NOME", "HORAS", "NOTURNO", "EXTRA", ""],
-    ["ADRIANO ARAUJO TEIXEIRA", "", "", "", ""],
-    ["MARCIO OLIVEIRA MUNIZ", "", "", "", ""],
-    ["WILLIAM DOS SANTOS SILVA", "", "", "", ""],
-]
 
 # =========================
 # FUNÇÕES DE TEMPO
 # =========================
 def hhmm_to_min(s):
-    if not s or ":" not in str(s):
-        return 0
+    if not s or ":" not in str(s): return 0
     s = str(s).strip()
     sign = -1 if s.startswith("-") else 1
     s = s.lstrip("-")
     try:
-        parts = s.split(":")
-        h = int(parts[0])
-        m = int(parts[1])
-        return sign * (h * 60 + m)
-    except:
-        return 0
+        h, m = s.split(":")
+        return sign * (int(h) * 60 + int(m))
+    except: return 0
 
 def min_to_hhmm(minutes):
     sign = "-" if minutes < 0 else ""
     minutes = abs(minutes)
     return f"{sign}{minutes // 60:02d}:{minutes % 60:02d}"
 
-# =========================
-# NORMALIZAÇÃO
-# =========================
 def normalize_name(s):
-    if not s:
-        return ""
+    if not s: return ""
     s = s.strip().upper()
     s = unicodedata.normalize("NFKD", s)
     s = "".join(c for c in s if not unicodedata.combining(c))
@@ -155,182 +87,90 @@ def normalize_name(s):
     return re.sub(r"\s+", " ", s).strip()
 
 # =========================
-# DETECTAR LOJA E MÊS
+# PARSER POR COORDENADAS
 # =========================
-def detect_loja_mes(text):
-    loja = "DESCONHECIDA"
-    for sigla, keywords in LOJAS.items():
-        for kw in keywords:
-            if kw in text.upper():
-                loja = sigla
-                break
-    mes_num, ano = None, None
-    m = re.search(r"DE \d{2}/(\d{2})/(\d{4})", text)
-    if m:
-        mes_num = int(m.group(1))
-        ano = int(m.group(2))
-    return loja, mes_num, ano
+def parse_page_coordinates(page):
+    text_full = page.extract_text()
+    if not text_full: return None
 
-def gerar_nome_aba(loja, mes_num, ano):
-    if not mes_num:
-        return None
-    mes_nome = MESES_PT.get(mes_num, f"MES{mes_num}")
-    return f"{mes_nome}_{loja}"
-
-# =========================
-# PARSER ROBUSTO
-# =========================
-def parse_totais_v2(text, is_motoboy):
-    """
-    Parser baseado em posições relativas e palavras-chave.
-    """
-    result = {
-        "TOTAL NORMAIS": "", "TOTAL NOTURNO": "",
-        "FALTA (dias)": "0", "FALTA E ATRASO": "", "EXTRA 70%": "",
-    }
+    # Identificar Funcionário e Cargo
+    nome_match = re.search(r"NOME DO FUNCION[AÁ]RIO:\s*(.+?)\s+PIS", text_full, re.IGNORECASE)
+    nome = nome_match.group(1).strip() if nome_match else "DESCONHECIDO"
     
-    # Encontrar a linha de TOTAIS
-    lines = text.split('\n')
-    totais_line = ""
-    for line in lines:
-        if line.strip().startswith("TOTAIS"):
-            totais_line = line
-            break
-    
-    if not totais_line:
-        return result
-
-    # Extrair todos os tokens de tempo (HH:MM) e inteiros
-    tokens = []
-    # Regex para capturar HH:MM ou números isolados (dias de falta)
-    # Importante: capturar a posição para tentar inferir a coluna
-    for m in re.finditer(r'(\d{1,3}:\d{2})|(\b\d{1,2}\b)', totais_line):
-        val = m.group(0)
-        pos = m.start()
-        tokens.append({"val": val, "pos": pos, "is_time": ":" in val})
-
-    times = [t for t in tokens if t["is_time"]]
-    inteiros = [t for t in tokens if not t["is_time"]]
-
-    if inteiros:
-        result["FALTA (dias)"] = inteiros[0]["val"]
-
-    if is_motoboy:
-        # Motoboy: Geralmente 4 campos de tempo
-        # [Auxiliar/Noturnas Normais] | TOTAL NORMAIS | TOTAL NOTURNO | EXTRA 70%
-        if len(times) >= 4:
-            result["TOTAL NORMAIS"] = times[1]["val"]
-            result["TOTAL NOTURNO"] = times[2]["val"]
-            result["EXTRA 70%"] = times[3]["val"]
-        elif len(times) == 3:
-            result["TOTAL NORMAIS"] = times[0]["val"]
-            result["TOTAL NOTURNO"] = times[1]["val"]
-            result["EXTRA 70%"] = times[2]["val"]
-    else:
-        # Celetista:
-        # Padrão 1 (Completo): [Aux] | TOTAL NORMAIS | TOTAL NOTURNO | FALTA E ATRASO | EXTRA 70%
-        # Padrão 2 (Sem Noturno): TOTAL NORMAIS | EXTRA 70%
-        
-        if len(times) >= 5:
-            # Caso Dilson: 42:18 (Aux) | 173:43 (Normais) | 55:34 (Noturno) | 02:07 (Falta) | 13:03 (Extra)
-            result["TOTAL NORMAIS"] = times[1]["val"]
-            result["TOTAL NOTURNO"] = times[2]["val"]
-            result["FALTA E ATRASO"] = times[3]["val"]
-            result["EXTRA 70%"] = times[4]["val"]
-        elif len(times) == 4:
-            # Tenta inferir se o primeiro é auxiliar
-            v0 = hhmm_to_min(times[0]["val"])
-            v1 = hhmm_to_min(times[1]["val"])
-            if v0 < v1 and v1 > 100*60: # Provável auxiliar
-                result["TOTAL NORMAIS"] = times[1]["val"]
-                result["TOTAL NOTURNO"] = times[2]["val"]
-                result["EXTRA 70%"] = times[3]["val"]
-            else:
-                result["TOTAL NORMAIS"] = times[0]["val"]
-                result["TOTAL NOTURNO"] = times[1]["val"]
-                result["FALTA E ATRASO"] = times[2]["val"]
-                result["EXTRA 70%"] = times[3]["val"]
-        elif len(times) == 2:
-            # Caso Andreia: 170:56 (Normais) | 08:39 (Extra)
-            # Como saber se o 08:39 é Extra ou Falta? 
-            # No PDF da Andreia, o 08:39 está bem à direita, sob a coluna EXTRA 70%
-            # Posição do "EXTRA 70%" no cabeçalho é alta.
-            result["TOTAL NORMAIS"] = times[0]["val"]
-            if times[1]["pos"] > 100: # Heurística de posição
-                result["EXTRA 70%"] = times[1]["val"]
-            else:
-                result["FALTA E ATRASO"] = times[1]["val"]
-        elif len(times) == 3:
-            result["TOTAL NORMAIS"] = times[0]["val"]
-            # Se o segundo valor for alto, pode ser noturno
-            v1 = hhmm_to_min(times[1]["val"])
-            if v1 > 10*60:
-                result["TOTAL NOTURNO"] = times[1]["val"]
-                result["EXTRA 70%"] = times[2]["val"]
-            else:
-                result["FALTA E ATRASO"] = times[1]["val"]
-                result["EXTRA 70%"] = times[2]["val"]
-
-    return result
-
-def parse_page_v2(text):
-    nome_match = re.search(r"NOME DO FUNCION[AÁ]RIO:\s*(.+?)\s+PIS", text, re.IGNORECASE)
-    if not nome_match:
-        return None
-    nome = nome_match.group(1).replace("\n", " ").strip()
-
-    cargo_match = re.search(
-        r"NOME DO CARGO:\s*([A-Za-záàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ\.\s/]+?)"
-        r"(?:\s+(?:SEG|TER|QUA|QUI|SEX|SAB|DOM|CNPJ))",
-        text, re.IGNORECASE
-    )
-    if not cargo_match:
-        cargo_match = re.search(r"NOME DO CARGO:\s*(.+)", text, re.IGNORECASE)
+    cargo_match = re.search(r"NOME DO CARGO:\s*(.+?)\s+(?:SEG|TER|QUA|QUI|SEX|SAB|DOM|CNPJ|DATA)", text_full, re.IGNORECASE)
+    if not cargo_match: cargo_match = re.search(r"NOME DO CARGO:\s*(.+)", text_full, re.IGNORECASE)
     cargo = cargo_match.group(1).strip() if cargo_match else ""
-    
     is_motoboy = "MOTOBOY" in cargo.upper()
 
-    empresa_match = re.search(r"NOME DA EMPRESA:\s*(.+)", text, re.IGNORECASE)
-    empresa = empresa_match.group(1).strip() if empresa_match else ""
-
-    if "TOTAIS" not in text:
-        return {
-            "NOME": nome, "CARGO": cargo, "EMPRESA": empresa,
-            "TOTAL NORMAIS": "", "TOTAL NOTURNO": "",
-            "FALTA (dias)": "0", "FALTA E ATRASO": "", "EXTRA 70%": "",
-            "EXTRA OU FALTA": "", "OBS": "Sem totais (cargo confiança/férias)"
-        }
-
-    campos = parse_totais_v2(text, is_motoboy)
-
-    falt_min = hhmm_to_min(campos["FALTA E ATRASO"])
-    extra_min = hhmm_to_min(campos["EXTRA 70%"])
-    saldo = extra_min - falt_min
-    saldo_str = min_to_hhmm(saldo) if (falt_min or extra_min) else ""
-
-    return {
-        "NOME": nome, "CARGO": cargo, "EMPRESA": empresa,
-        **campos,
-        "EXTRA OU FALTA": saldo_str,
-        "OBS": ""
+    # Extrair palavras com coordenadas para localizar colunas
+    words = page.extract_words()
+    
+    # Localizar os limites das colunas baseados no cabeçalho
+    # Valores aproximados baseados no layout Control iD
+    col_limits = {
+        "TOTAL NORMAIS": (450, 510),
+        "TOTAL NOTURNO": (510, 570),
+        "FALTA E ATRASO": (650, 720),
+        "EXTRA 70%": (720, 800)
     }
 
-def extract_pdf_v2(pdf_file):
+    result = {
+        "NOME": nome, "CARGO": cargo,
+        "TOTAL NORMAIS": "", "TOTAL NOTURNO": "",
+        "FALTA (dias)": "0", "FALTA E ATRASO": "", "EXTRA 70%": "",
+        "EXTRA OU FALTA": "", "OBS": ""
+    }
+
+    # Encontrar a linha de TOTAIS e seus valores
+    totais_y = None
+    for word in words:
+        if word['text'] == "TOTAIS":
+            totais_y = word['top']
+            break
+    
+    if totais_y:
+        # Pegar todas as palavras na mesma altura (margem de 5px)
+        totais_words = [w for w in words if abs(w['top'] - totais_y) < 5]
+        
+        for w in totais_words:
+            txt = w['text']
+            x = w['x0']
+            
+            # Se for um número isolado, é falta em dias
+            if re.match(r"^\d{1,2}$", txt):
+                result["FALTA (dias)"] = txt
+            
+            # Se for formato de hora HH:MM
+            if ":" in txt:
+                if 450 <= x < 515: result["TOTAL NORMAIS"] = txt
+                elif 515 <= x < 580: result["TOTAL NOTURNO"] = txt
+                elif 650 <= x < 725: result["FALTA E ATRASO"] = txt
+                elif 725 <= x < 810: result["EXTRA 70%"] = txt
+
+    # Cálculo de Saldo
+    falt_min = hhmm_to_min(result["FALTA E ATRASO"])
+    extra_min = hhmm_to_min(result["EXTRA 70%"])
+    saldo = extra_min - falt_min
+    result["EXTRA OU FALTA"] = min_to_hhmm(saldo) if (falt_min or extra_min) else ""
+    
+    return result
+
+def extract_pdf_v3(pdf_file):
     results = []
     loja, mes_num, ano = "DESCONHECIDA", None, None
     with pdfplumber.open(pdf_file) as pdf:
         for i, page in enumerate(pdf.pages):
-            # Usar layout=True para preservar colunas
-            text = page.extract_text(layout=True)
-            if not text:
-                continue
             if i == 0:
-                loja, mes_num, ano = detect_loja_mes(text)
-            data = parse_page_v2(text)
+                text_first = page.extract_text()
+                for sigla, keywords in LOJAS.items():
+                    for kw in keywords:
+                        if kw in text_first.upper(): loja = sigla; break
+                m = re.search(r"DE \d{2}/(\d{2})/(\d{4})", text_first)
+                if m: mes_num, ano = int(m.group(1)), int(m.group(2))
+            
+            data = parse_page_coordinates(page)
             if data:
-                data["LOJA"] = loja
-                data["MES"] = mes_num
-                data["ANO"] = ano
+                data["LOJA"], data["MES"], data["ANO"] = loja, mes_num, ano
                 results.append(data)
     return results, loja, mes_num, ano
 
@@ -340,122 +180,54 @@ def extract_pdf_v2(pdf_file):
 @st.cache_resource
 def get_client():
     creds_raw = os.environ.get(ENV_KEY_JSON)
-    if not creds_raw:
-        raise ValueError("Credencial GCP_SERVICE_ACCOUNT_JSON não configurada!")
-    creds_dict = json.loads(creds_raw)
-    creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+    if not creds_raw: raise ValueError("Credencial GCP_SERVICE_ACCOUNT_JSON não configurada!")
+    creds = Credentials.from_service_account_info(json.loads(creds_raw), scopes=SCOPES)
     return gspread.authorize(creds)
-
-def extract_sheet_id(url):
-    m = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
-    return m.group(1) if m else None
-
-def garantir_aba(sh, aba_nome, loja):
-    try:
-        return sh.worksheet(aba_nome), False
-    except gspread.WorksheetNotFound:
-        pass
-
-    nova_aba = sh.add_worksheet(title=aba_nome, rows=40, cols=10)
-    template = TEMPLATE_JPBB if loja == "JPBB" else TEMPLATE_TPBR
-    nova_aba.update("A1", template)
-    return nova_aba, True
 
 def enviar_para_planilha(df, aba_nome, loja):
     client = get_client()
-    sheet_id = extract_sheet_id(PLANILHA_URL)
-    sh = client.open_by_key(sheet_id)
+    sh = client.open_by_key(re.search(r"/d/([a-zA-Z0-9-_]+)", PLANILHA_URL).group(1))
+    
+    try: aba = sh.worksheet(aba_nome)
+    except: st.error(f"Aba {aba_nome} não encontrada!"); return 0, [], False
 
-    aba, foi_criada = garantir_aba(sh, aba_nome, loja)
     mapa = MAPA_LINHAS_JPBB if loja == "JPBB" else MAPA_LINHAS_TPBR
-
-    erros = []
     enviados = 0
-
     for _, row in df.iterrows():
-        nome_norm = normalize_name(row["NOME"])
-        is_moto = "MOTOBOY" in str(row.get("CARGO", "")).upper()
-        linha = mapa.get(nome_norm)
-
-        if not linha:
-            erros.append(f"⚠️ {row['NOME']} — não encontrado no mapeamento")
-            continue
-
+        linha = mapa.get(normalize_name(row["NOME"]))
+        if not linha: continue
+        
+        is_moto = "MOTOBOY" in str(row["CARGO"]).upper()
         if is_moto:
             if loja == "JPBB":
-                # JPBB motoboy: B=NOTURNO, C=HORAS, D=EXTRA
-                aba.update(f"B{linha}", [[row.get("TOTAL NOTURNO", "")]])
-                aba.update(f"C{linha}", [[row.get("TOTAL NORMAIS", "")]])
-                aba.update(f"D{linha}", [[row.get("EXTRA 70%", "")]])
+                aba.update(f"B{linha}:D{linha}", [[row["TOTAL NOTURNO"], row["TOTAL NORMAIS"], row["EXTRA 70%"]]])
             else:
-                # TPBR motoboy: B=HORAS, C=NOTURNO, D=EXTRA
-                aba.update(f"B{linha}", [[row.get("TOTAL NORMAIS", "")]])
-                aba.update(f"C{linha}", [[row.get("TOTAL NOTURNO", "")]])
-                aba.update(f"D{linha}", [[row.get("EXTRA 70%", "")]])
+                aba.update(f"B{linha}:D{linha}", [[row["TOTAL NORMAIS"], row["TOTAL NOTURNO"], row["EXTRA 70%"]]])
         else:
-            # Celetistas: B=FALTA, C=EXTRA, D=SALDO, E=NOTURNO
-            aba.update(f"B{linha}", [[row.get("FALTA E ATRASO", "")]])
-            aba.update(f"C{linha}", [[row.get("EXTRA 70%", "")]])
-            aba.update(f"D{linha}", [[row.get("EXTRA OU FALTA", "")]])
-            aba.update(f"E{linha}", [[row.get("TOTAL NOTURNO", "")]])
-
+            aba.update(f"B{linha}:E{linha}", [[row["FALTA E ATRASO"], row["EXTRA 70%"], row["EXTRA OU FALTA"], row["TOTAL NOTURNO"]]])
         enviados += 1
-
-    return enviados, erros, foi_criada
+    return enviados, [], False
 
 # =========================
 # UI
 # =========================
-uploaded_files = st.file_uploader(
-    "📂 Enviar espelhos de ponto (PDF)",
-    type=["pdf"],
-    accept_multiple_files=True
-)
+uploaded_files = st.file_uploader("📂 Enviar PDFs", type=["pdf"], accept_multiple_files=True)
 
 if uploaded_files:
     todos_dados = []
     infos_pdfs = []
-
-    for uploaded_file in uploaded_files:
-        with st.spinner(f"⏳ Lendo {uploaded_file.name}..."):
-            dados, loja, mes_num, ano = extract_pdf_v2(uploaded_file)
-            todos_dados.extend(dados)
-            aba_auto = gerar_nome_aba(loja, mes_num, ano)
-            infos_pdfs.append({
-                "arquivo": uploaded_file.name,
-                "loja": loja,
-                "mes": mes_num,
-                "ano": ano,
-                "aba_sugerida": aba_auto
-            })
+    for f in uploaded_files:
+        dados, loja, mes, ano = extract_pdf_v3(f)
+        todos_dados.extend(dados)
+        infos_pdfs.append({"arquivo": f.name, "loja": loja, "aba": f"{MESES_PT.get(mes, 'MES')}_{loja}"})
 
     df = pd.DataFrame(todos_dados)
-
     st.success(f"✅ {len(df)} funcionários extraídos")
+    st.dataframe(df[["NOME", "CARGO", "FALTA E ATRASO", "EXTRA 70%", "EXTRA OU FALTA", "TOTAL NOTURNO", "TOTAL NORMAIS"]], use_container_width=True)
 
-    st.subheader("📋 Conferência dos dados")
-    colunas_exibir = ["NOME", "CARGO", "FALTA E ATRASO", "EXTRA 70%", "EXTRA OU FALTA", "TOTAL NOTURNO", "TOTAL NORMAIS"]
-    st.dataframe(df[[c for c in colunas_exibir if c in df.columns]], use_container_width=True)
-
-    excel_path = "/tmp/resultado_horas.xlsx"
-    df.to_excel(excel_path, index=False)
-    with open(excel_path, "rb") as f:
-        st.download_button("📥 Baixar Excel", data=f, file_name="resultado.xlsx")
-
-    st.divider()
-    st.subheader("🚀 Enviar para Google Sheets")
-
-    if not os.environ.get(ENV_KEY_JSON):
-        st.error("❌ Credencial não configurada!")
-    else:
+    if os.environ.get(ENV_KEY_JSON):
         for info in infos_pdfs:
-            aba_input = st.text_input(f"Aba para {info['arquivo']}", value=info["aba_sugerida"] or "")
-            if st.button(f"Enviar {info['loja']} para Planilha"):
-                df_loja = df[df["LOJA"] == info["loja"]]
-                with st.spinner("Enviando..."):
-                    try:
-                        enviados, erros, foi_criada = enviar_para_planilha(df_loja, aba_input, info["loja"])
-                        if enviados: st.success(f"✅ {enviados} enviados!")
-                        if erros: st.warning(f"Avisos: {len(erros)}")
-                    except Exception as ex:
-                        st.error(f"Erro: {ex}")
+            aba_input = st.text_input(f"Aba para {info['arquivo']}", value=info["aba"])
+            if st.button(f"Enviar {info['arquivo']} para Planilha"):
+                enviados, _, _ = enviar_para_planilha(df[df["LOJA"] == info["loja"]], aba_input, info["loja"])
+                if enviados: st.success(f"✅ {enviados} enviados para {aba_input}!")
