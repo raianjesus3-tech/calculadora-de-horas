@@ -1,12 +1,3 @@
-Verifique seu número de telefone
-Apenas verificação, não ligado à sua conta
-Brasil
-+55
-Digite o número de telefone
-
-Enviar código
-©2026 Meta
-app_finalizado.py
 import streamlit as st
 import pdfplumber
 import re
@@ -450,4 +441,3 @@ if uploaded_files:
                                     st.write(e)
                         except Exception as ex:
                             st.error(f"❌ Erro: {ex}")
-Manus
