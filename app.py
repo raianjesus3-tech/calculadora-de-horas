@@ -1,3 +1,12 @@
+Verifique seu número de telefone
+Apenas verificação, não ligado à sua conta
+Brasil
++55
+Digite o número de telefone
+
+Enviar código
+©2026 Meta
+app_finalizado.py
 import streamlit as st
 import pdfplumber
 import re
@@ -8,6 +17,7 @@ import unicodedata
 import gspread
 from google.oauth2.service_account import Credentials
 
+# Configuração da página
 st.set_page_config(
     page_title="Sistema Calculadora de Horas",
     page_icon="⏱",
@@ -21,7 +31,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<p class="big-title">⏱ Sistema Calculadora de Horas</p>', unsafe_allow_html=True)
-st.caption("Versão 13 • Sistema Profissional")
+st.caption("Versão 13.1 • Sistema Profissional Finalizado")
 
 # =========================
 # CONFIG
@@ -46,7 +56,6 @@ LOJAS = {
 
 # -------------------------------------------------------
 # MAPEAMENTO JPBB: nome normalizado -> linha na planilha
-# Celetistas: linhas 2-8  |  Motoboys: linhas 11-13
 # -------------------------------------------------------
 MAPA_LINHAS_JPBB = {
     "ADRIAN LOPES LIMA": 2,
@@ -56,7 +65,6 @@ MAPA_LINHAS_JPBB = {
     "PABLO HENRIQUE MACEDO NASCIMENTO": 6,
     "VICTOR EDUARDO MACEDO NASCIMENTO": 7,
     "YURI CRUZ DA SILVA": 8,
-    # Motoboys horistas
     "CAIO DE JESUS DA SILVA": 11,
     "MARCOS CRISPIM DOS SANTOS OLIVEIRA": 12,
     "UBIRATAN SANTOS DE JESUS": 13,
@@ -64,7 +72,6 @@ MAPA_LINHAS_JPBB = {
 
 # -------------------------------------------------------
 # MAPEAMENTO TPBR: nome normalizado -> linha na planilha
-# Celetistas: linhas 2-11  |  Motoboys: linhas 13-15
 # -------------------------------------------------------
 MAPA_LINHAS_TPBR = {
     "ANDREIA GOMES DOS SANTOS": 2,
@@ -77,7 +84,6 @@ MAPA_LINHAS_TPBR = {
     "SAMARA FARIAS DOS SANTOS": 9,
     "SAULO TADEU FARIAS DOS SANTOS": 10,
     "VITORIA LUIZA HUGHES DE FREITAS": 11,
-    # Motoboys horistas (linha 12 = MOTOBOYS HORISTAS, linha 13 = cabeçalho)
     "ADRIANO ARAUJO TEIXEIRA": 14,
     "MARCIO OLIVEIRA MUNIZ": 15,
     "WILLIAM DOS SANTOS SILVA": 16,
@@ -95,6 +101,7 @@ TEMPLATE_JPBB = [
     ["PABLO HENRIQUE MACEDO NASCIMENTO", "", "", "", ""],
     ["VICTOR EDUARDO MACEDO NASCIMENTO", "", "", "", ""],
     ["YURI CRUZ DA SILVA", "", "", "", ""],
+    ["", "", "", "", ""],
     ["MOTOBOYS HORISTAS", "", "", "", ""],
     ["NOME", "NOTURNO", "HORAS", "EXTRA", ""],
     ["CAIO DE JESUS DA SILVA", "", "", "", ""],
@@ -114,6 +121,7 @@ TEMPLATE_TPBR = [
     ["SAMARA FARIAS DOS SANTOS", "", "", "", ""],
     ["SAULO TADEU FARIAS DOS SANTOS", "", "", "", ""],
     ["VITORIA LUIZA HUGHES DE FREITAS", "", "", "", ""],
+    ["", "", "", "", ""],
     ["MOTOBOYS HORISTAS", "", "", "", ""],
     ["NOME", "HORAS", "NOTURNO", "EXTRA", ""],
     ["ADRIANO ARAUJO TEIXEIRA", "", "", "", ""],
@@ -131,8 +139,10 @@ def hhmm_to_min(s):
     sign = -1 if s.startswith("-") else 1
     s = s.lstrip("-")
     try:
-        h, m = s.split(":")
-        return sign * (int(h) * 60 + int(m))
+        parts = s.split(":")
+        h = int(parts[0])
+        m = int(parts[1])
+        return sign * (h * 60 + m)
     except:
         return 0
 
@@ -180,15 +190,6 @@ def gerar_nome_aba(loja, mes_num, ano):
 # PARSER
 # =========================
 def parse_totais(tokens):
-    """
-    Parser universal Control iD — JPBB e TPBR.
-
-    Após descarte de NOTURNAS_NORMAIS (se existir):
-        TOTAL_NORMAIS | [NOTURNO >= 19h] | [FALTA_ATRASO] | [EXTRA_70]
-
-    Descarte NOTURNAS_NORMAIS: h1 < 80h E h2 >= 100h.
-    Distinção NOTURNO vs FALTA: valores >= 19h são NOTURNO.
-    """
     result = {
         "TOTAL NORMAIS": "", "TOTAL NOTURNO": "",
         "FALTA (dias)": "0", "FALTA E ATRASO": "", "EXTRA 70%": "",
@@ -199,7 +200,6 @@ def parse_totais(tokens):
     if inteiros:
         result["FALTA (dias)"] = str(inteiros[0])
 
-    # Descartar NOTURNAS_NORMAIS: se primeiro token < segundo, é campo auxiliar
     if len(horas) >= 2:
         if hhmm_to_min(horas[0]) < hhmm_to_min(horas[1]):
             horas = horas[1:]
@@ -207,10 +207,8 @@ def parse_totais(tokens):
     if not horas:
         return result
 
-    # Primeiro campo sempre é TOTAL NORMAIS
     result["TOTAL NORMAIS"] = horas[0]
 
-    # Restante: >= 19h → NOTURNO | < 19h → primeiro FALTA, depois EXTRA
     for h in horas[1:]:
         v = hhmm_to_min(h)
         if v >= 19 * 60 and not result["TOTAL NOTURNO"]:
@@ -303,9 +301,6 @@ def extract_sheet_id(url):
     return m.group(1) if m else None
 
 def garantir_aba(sh, aba_nome, loja):
-    """
-    Retorna a aba. Se não existir, cria com o template correto da loja.
-    """
     try:
         return sh.worksheet(aba_nome), False
     except gspread.WorksheetNotFound:
@@ -317,19 +312,6 @@ def garantir_aba(sh, aba_nome, loja):
     return nova_aba, True
 
 def enviar_para_planilha(df, aba_nome, loja):
-    """
-    Envia os dados para a planilha. Cria a aba automaticamente se não existir.
-
-    JPBB — Celetistas (linhas 2-8):
-        B = FALTA (dias)  |  C = EXTRA 70%  |  D = EXTRA OU FALTA  |  E = NOTURNO
-    JPBB — Motoboys (linhas 11-13):
-        B = NOTURNO  |  C = HORAS (TOTAL NORMAIS)  |  D = EXTRA 70%
-
-    TPBR — Celetistas (linhas 2-11):
-        B = FALTA (dias)  |  C = EXTRA 70%  |  D = EXTRA OU FALTA  |  E = NOTURNO
-    TPBR — Motoboys (linhas 13-15):
-        B = HORAS (TOTAL NORMAIS)  |  C = NOTURNO  |  D = EXTRA 70%
-    """
     client = get_client()
     sheet_id = extract_sheet_id(PLANILHA_URL)
     sh = client.open_by_key(sheet_id)
@@ -351,17 +333,14 @@ def enviar_para_planilha(df, aba_nome, loja):
 
         if is_moto:
             if loja == "JPBB":
-                # JPBB motoboy: B=NOTURNO, C=HORAS, D=EXTRA
                 aba.update(f"B{linha}", [[row.get("TOTAL NOTURNO", "")]])
                 aba.update(f"C{linha}", [[row.get("TOTAL NORMAIS", "")]])
                 aba.update(f"D{linha}", [[row.get("EXTRA 70%", "")]])
             else:
-                # TPBR motoboy: B=HORAS, C=NOTURNO, D=EXTRA
                 aba.update(f"B{linha}", [[row.get("TOTAL NORMAIS", "")]])
                 aba.update(f"C{linha}", [[row.get("TOTAL NOTURNO", "")]])
                 aba.update(f"D{linha}", [[row.get("EXTRA 70%", "")]])
         else:
-            # Celetistas (igual em ambas as lojas)
             aba.update(f"B{linha}", [[row.get("FALTA E ATRASO", "")]])
             aba.update(f"C{linha}", [[row.get("EXTRA 70%", "")]])
             aba.update(f"D{linha}", [[row.get("EXTRA OU FALTA", "")]])
@@ -471,3 +450,4 @@ if uploaded_files:
                                     st.write(e)
                         except Exception as ex:
                             st.error(f"❌ Erro: {ex}")
+Manus
