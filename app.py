@@ -22,7 +22,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<p class="big-title">⏱ Sistema Calculadora de Horas</p>', unsafe_allow_html=True)
-st.caption("Versão 13.1 • Sistema Profissional Finalizado")
+st.caption("Versão 14.0 • Sistema Profissional com Parser Inteligente")
 
 # =========================
 # CONFIG
@@ -178,40 +178,102 @@ def gerar_nome_aba(loja, mes_num, ano):
     return f"{mes_nome}_{loja}"
 
 # =========================
-# PARSER
+# PARSER ROBUSTO
 # =========================
-def parse_totais(tokens):
+def parse_totais_v2(text, is_motoboy):
+    """
+    Parser baseado em posições relativas e palavras-chave.
+    """
     result = {
         "TOTAL NORMAIS": "", "TOTAL NOTURNO": "",
         "FALTA (dias)": "0", "FALTA E ATRASO": "", "EXTRA 70%": "",
     }
-    horas = [t[1] for t in tokens if t[0] == "h"]
-    inteiros = [t[1] for t in tokens if t[0] == "i"]
-
-    if inteiros:
-        result["FALTA (dias)"] = str(inteiros[0])
-
-    if len(horas) >= 2:
-        if hhmm_to_min(horas[0]) < hhmm_to_min(horas[1]):
-            horas = horas[1:]
-
-    if not horas:
+    
+    # Encontrar a linha de TOTAIS
+    lines = text.split('\n')
+    totais_line = ""
+    for line in lines:
+        if line.strip().startswith("TOTAIS"):
+            totais_line = line
+            break
+    
+    if not totais_line:
         return result
 
-    result["TOTAL NORMAIS"] = horas[0]
+    # Extrair todos os tokens de tempo (HH:MM) e inteiros
+    tokens = []
+    # Regex para capturar HH:MM ou números isolados (dias de falta)
+    # Importante: capturar a posição para tentar inferir a coluna
+    for m in re.finditer(r'(\d{1,3}:\d{2})|(\b\d{1,2}\b)', totais_line):
+        val = m.group(0)
+        pos = m.start()
+        tokens.append({"val": val, "pos": pos, "is_time": ":" in val})
 
-    for h in horas[1:]:
-        v = hhmm_to_min(h)
-        if v >= 19 * 60 and not result["TOTAL NOTURNO"]:
-            result["TOTAL NOTURNO"] = h
-        elif not result["FALTA E ATRASO"]:
-            result["FALTA E ATRASO"] = h
-        else:
-            result["EXTRA 70%"] = h
+    times = [t for t in tokens if t["is_time"]]
+    inteiros = [t for t in tokens if not t["is_time"]]
+
+    if inteiros:
+        result["FALTA (dias)"] = inteiros[0]["val"]
+
+    if is_motoboy:
+        # Motoboy: Geralmente 4 campos de tempo
+        # [Auxiliar/Noturnas Normais] | TOTAL NORMAIS | TOTAL NOTURNO | EXTRA 70%
+        if len(times) >= 4:
+            result["TOTAL NORMAIS"] = times[1]["val"]
+            result["TOTAL NOTURNO"] = times[2]["val"]
+            result["EXTRA 70%"] = times[3]["val"]
+        elif len(times) == 3:
+            result["TOTAL NORMAIS"] = times[0]["val"]
+            result["TOTAL NOTURNO"] = times[1]["val"]
+            result["EXTRA 70%"] = times[2]["val"]
+    else:
+        # Celetista:
+        # Padrão 1 (Completo): [Aux] | TOTAL NORMAIS | TOTAL NOTURNO | FALTA E ATRASO | EXTRA 70%
+        # Padrão 2 (Sem Noturno): TOTAL NORMAIS | EXTRA 70%
+        
+        if len(times) >= 5:
+            # Caso Dilson: 42:18 (Aux) | 173:43 (Normais) | 55:34 (Noturno) | 02:07 (Falta) | 13:03 (Extra)
+            result["TOTAL NORMAIS"] = times[1]["val"]
+            result["TOTAL NOTURNO"] = times[2]["val"]
+            result["FALTA E ATRASO"] = times[3]["val"]
+            result["EXTRA 70%"] = times[4]["val"]
+        elif len(times) == 4:
+            # Tenta inferir se o primeiro é auxiliar
+            v0 = hhmm_to_min(times[0]["val"])
+            v1 = hhmm_to_min(times[1]["val"])
+            if v0 < v1 and v1 > 100*60: # Provável auxiliar
+                result["TOTAL NORMAIS"] = times[1]["val"]
+                result["TOTAL NOTURNO"] = times[2]["val"]
+                result["EXTRA 70%"] = times[3]["val"]
+            else:
+                result["TOTAL NORMAIS"] = times[0]["val"]
+                result["TOTAL NOTURNO"] = times[1]["val"]
+                result["FALTA E ATRASO"] = times[2]["val"]
+                result["EXTRA 70%"] = times[3]["val"]
+        elif len(times) == 2:
+            # Caso Andreia: 170:56 (Normais) | 08:39 (Extra)
+            # Como saber se o 08:39 é Extra ou Falta? 
+            # No PDF da Andreia, o 08:39 está bem à direita, sob a coluna EXTRA 70%
+            # Posição do "EXTRA 70%" no cabeçalho é alta.
+            result["TOTAL NORMAIS"] = times[0]["val"]
+            if times[1]["pos"] > 100: # Heurística de posição
+                result["EXTRA 70%"] = times[1]["val"]
+            else:
+                result["FALTA E ATRASO"] = times[1]["val"]
+        elif len(times) == 3:
+            result["TOTAL NORMAIS"] = times[0]["val"]
+            # Se o segundo valor for alto, pode ser noturno
+            v1 = hhmm_to_min(times[1]["val"])
+            if v1 > 10*60:
+                result["TOTAL NOTURNO"] = times[1]["val"]
+                result["EXTRA 70%"] = times[2]["val"]
+            else:
+                result["FALTA E ATRASO"] = times[1]["val"]
+                result["EXTRA 70%"] = times[2]["val"]
 
     return result
 
-def parse_page(text):
+def parse_page_v2(text):
     nome_match = re.search(r"NOME DO FUNCION[AÁ]RIO:\s*(.+?)\s+PIS", text, re.IGNORECASE)
     if not nome_match:
         return None
@@ -225,12 +287,13 @@ def parse_page(text):
     if not cargo_match:
         cargo_match = re.search(r"NOME DO CARGO:\s*(.+)", text, re.IGNORECASE)
     cargo = cargo_match.group(1).strip() if cargo_match else ""
+    
+    is_motoboy = "MOTOBOY" in cargo.upper()
 
     empresa_match = re.search(r"NOME DA EMPRESA:\s*(.+)", text, re.IGNORECASE)
     empresa = empresa_match.group(1).strip() if empresa_match else ""
 
-    totais_match = re.search(r"^TOTAIS\s+(.*)", text, re.MULTILINE)
-    if not totais_match:
+    if "TOTAIS" not in text:
         return {
             "NOME": nome, "CARGO": cargo, "EMPRESA": empresa,
             "TOTAL NORMAIS": "", "TOTAL NOTURNO": "",
@@ -238,12 +301,7 @@ def parse_page(text):
             "EXTRA OU FALTA": "", "OBS": "Sem totais (cargo confiança/férias)"
         }
 
-    totais_line = totais_match.group(1).strip()
-    tokens = []
-    for t in re.findall(r'\d{1,3}:\d{2}|\b\d{1,2}\b', totais_line):
-        tokens.append(("h", t) if ":" in t else ("i", int(t)))
-
-    campos = parse_totais(tokens)
+    campos = parse_totais_v2(text, is_motoboy)
 
     falt_min = hhmm_to_min(campos["FALTA E ATRASO"])
     extra_min = hhmm_to_min(campos["EXTRA 70%"])
@@ -257,17 +315,18 @@ def parse_page(text):
         "OBS": ""
     }
 
-def extract_pdf(pdf_file):
+def extract_pdf_v2(pdf_file):
     results = []
     loja, mes_num, ano = "DESCONHECIDA", None, None
     with pdfplumber.open(pdf_file) as pdf:
         for i, page in enumerate(pdf.pages):
-            text = page.extract_text()
+            # Usar layout=True para preservar colunas
+            text = page.extract_text(layout=True)
             if not text:
                 continue
             if i == 0:
                 loja, mes_num, ano = detect_loja_mes(text)
-            data = parse_page(text)
+            data = parse_page_v2(text)
             if data:
                 data["LOJA"] = loja
                 data["MES"] = mes_num
@@ -297,7 +356,7 @@ def garantir_aba(sh, aba_nome, loja):
     except gspread.WorksheetNotFound:
         pass
 
-    nova_aba = sh.add_worksheet(title=aba_nome, rows=30, cols=10)
+    nova_aba = sh.add_worksheet(title=aba_nome, rows=40, cols=10)
     template = TEMPLATE_JPBB if loja == "JPBB" else TEMPLATE_TPBR
     nova_aba.update("A1", template)
     return nova_aba, True
@@ -324,14 +383,17 @@ def enviar_para_planilha(df, aba_nome, loja):
 
         if is_moto:
             if loja == "JPBB":
+                # JPBB motoboy: B=NOTURNO, C=HORAS, D=EXTRA
                 aba.update(f"B{linha}", [[row.get("TOTAL NOTURNO", "")]])
                 aba.update(f"C{linha}", [[row.get("TOTAL NORMAIS", "")]])
                 aba.update(f"D{linha}", [[row.get("EXTRA 70%", "")]])
             else:
+                # TPBR motoboy: B=HORAS, C=NOTURNO, D=EXTRA
                 aba.update(f"B{linha}", [[row.get("TOTAL NORMAIS", "")]])
                 aba.update(f"C{linha}", [[row.get("TOTAL NOTURNO", "")]])
                 aba.update(f"D{linha}", [[row.get("EXTRA 70%", "")]])
         else:
+            # Celetistas: B=FALTA, C=EXTRA, D=SALDO, E=NOTURNO
             aba.update(f"B{linha}", [[row.get("FALTA E ATRASO", "")]])
             aba.update(f"C{linha}", [[row.get("EXTRA 70%", "")]])
             aba.update(f"D{linha}", [[row.get("EXTRA OU FALTA", "")]])
@@ -345,7 +407,7 @@ def enviar_para_planilha(df, aba_nome, loja):
 # UI
 # =========================
 uploaded_files = st.file_uploader(
-    "📂 Enviar espelhos de ponto (pode enviar múltiplos PDFs de uma vez)",
+    "📂 Enviar espelhos de ponto (PDF)",
     type=["pdf"],
     accept_multiple_files=True
 )
@@ -356,7 +418,7 @@ if uploaded_files:
 
     for uploaded_file in uploaded_files:
         with st.spinner(f"⏳ Lendo {uploaded_file.name}..."):
-            dados, loja, mes_num, ano = extract_pdf(uploaded_file)
+            dados, loja, mes_num, ano = extract_pdf_v2(uploaded_file)
             todos_dados.extend(dados)
             aba_auto = gerar_nome_aba(loja, mes_num, ano)
             infos_pdfs.append({
@@ -369,75 +431,31 @@ if uploaded_files:
 
     df = pd.DataFrame(todos_dados)
 
-    st.success(f"✅ {len(df)} funcionários extraídos de {len(uploaded_files)} arquivo(s)")
-
-    st.subheader("📌 PDFs detectados")
-    for info in infos_pdfs:
-        mes_nome = MESES_PT.get(info["mes"], "?") if info["mes"] else "?"
-        aba = info["aba_sugerida"] or "não detectada"
-        st.info(f"**{info['arquivo']}** → Loja: `{info['loja']}` | Mês: `{mes_nome}/{info['ano']}` | Aba: `{aba}`")
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total funcionários", len(df))
-    col2.metric("Motoboys", len(df[df["CARGO"].str.contains("MOTOBOY", case=False, na=False)]))
-    col3.metric("Com falta", len(df[df["FALTA (dias)"].astype(str) != "0"]))
-    col4.metric("Com extra", len(df[df["EXTRA 70%"] != ""]))
+    st.success(f"✅ {len(df)} funcionários extraídos")
 
     st.subheader("📋 Conferência dos dados")
-    colunas_exibir = ["NOME", "CARGO", "EMPRESA", "FALTA (dias)", "EXTRA 70%", "EXTRA OU FALTA", "TOTAL NOTURNO", "TOTAL NORMAIS", "OBS"]
+    colunas_exibir = ["NOME", "CARGO", "FALTA E ATRASO", "EXTRA 70%", "EXTRA OU FALTA", "TOTAL NOTURNO", "TOTAL NORMAIS"]
     st.dataframe(df[[c for c in colunas_exibir if c in df.columns]], use_container_width=True)
-
-    with st.expander("ℹ️ Legenda"):
-        st.markdown("""
-        | Coluna | Descrição |
-        |---|---|
-        | **FALTA (dias)** | Dias de falta |
-        | **EXTRA 70%** | Horas extras (70%) |
-        | **EXTRA OU FALTA** | FALTA E ATRASO − EXTRA 70% *(+ deve horas / − banco de horas)* |
-        | **TOTAL NOTURNO** | Total de horas noturnas |
-        | **TOTAL NORMAIS** | Total de horas trabalhadas (motoboys) |
-        """)
 
     excel_path = "/tmp/resultado_horas.xlsx"
     df.to_excel(excel_path, index=False)
     with open(excel_path, "rb") as f:
-        st.download_button(
-            "📥 Baixar como Excel",
-            data=f,
-            file_name="resultado_horas.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        st.download_button("📥 Baixar Excel", data=f, file_name="resultado.xlsx")
 
     st.divider()
     st.subheader("🚀 Enviar para Google Sheets")
 
     if not os.environ.get(ENV_KEY_JSON):
-        st.error("❌ Credencial GCP_SERVICE_ACCOUNT_JSON não configurada no ambiente!")
+        st.error("❌ Credencial não configurada!")
     else:
         for info in infos_pdfs:
-            aba_sugerida = info["aba_sugerida"] or ""
-            col_a, col_b = st.columns([2, 1])
-            with col_a:
-                aba_input = st.text_input(
-                    f"Aba para **{info['arquivo']}**",
-                    value=aba_sugerida,
-                    key=f"aba_{info['arquivo']}"
-                )
-            with col_b:
-                st.write("")
-                st.write("")
-                if st.button(f"Enviar {info['loja']}", key=f"btn_{info['arquivo']}"):
-                    df_loja = df[df["LOJA"] == info["loja"]]
-                    with st.spinner(f"⏳ Enviando para '{aba_input}'..."):
-                        try:
-                            enviados, erros, foi_criada = enviar_para_planilha(df_loja, aba_input, info["loja"])
-                            if foi_criada:
-                                st.info(f"📋 Aba **'{aba_input}'** não existia — foi criada automaticamente com o template!")
-                            if enviados:
-                                st.success(f"✅ {enviados} funcionários enviados para **'{aba_input}'**!")
-                            if erros:
-                                st.warning("Alguns funcionários não foram mapeados:")
-                                for e in erros:
-                                    st.write(e)
-                        except Exception as ex:
-                            st.error(f"❌ Erro: {ex}")
+            aba_input = st.text_input(f"Aba para {info['arquivo']}", value=info["aba_sugerida"] or "")
+            if st.button(f"Enviar {info['loja']} para Planilha"):
+                df_loja = df[df["LOJA"] == info["loja"]]
+                with st.spinner("Enviando..."):
+                    try:
+                        enviados, erros, foi_criada = enviar_para_planilha(df_loja, aba_input, info["loja"])
+                        if enviados: st.success(f"✅ {enviados} enviados!")
+                        if erros: st.warning(f"Avisos: {len(erros)}")
+                    except Exception as ex:
+                        st.error(f"Erro: {ex}")
